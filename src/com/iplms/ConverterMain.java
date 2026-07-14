@@ -24,6 +24,10 @@ public class ConverterMain {
         }
 
         String targetListPath = args[0];
+
+        // 📌 1. 시작 시 현재 프로그램이 바라보는 시스템 기준 실행 경로(Working Directory) 선언
+        System.out.println("📂 [System 환경 정보] 현재 실행 경로 (User Dir): " + System.getProperty("user.dir"));
+
         loadProperties();
 
         System.out.println("🚀 [IPLMS Hybrid Converter] 단일 LibreOffice 가속 엔진 가동 개시");
@@ -126,7 +130,7 @@ public class ConverterMain {
         ProcessBuilder pb;
 
         if ("hwp".equals(ext)) {
-            // 📌 [핵심] 한글 파일인 경우, 앞서 추가한 HWP2002 전용 입력 필터(--infilter)를 명시적으로 주입합니다.
+            // 📌 한글 파일인 경우, 앞서 추가한 HWP2002 전용 입력 필터(--infilter)를 명시적으로 주입합니다.
             pb = new ProcessBuilder(
                     libreOfficePath,
                     "--headless",
@@ -203,17 +207,38 @@ public class ConverterMain {
     }
 
     /**
-     * 환경 설정 로드
+     * 📌 2. 실행 중인 클래스(또는 JAR 파일)와 '동일한 위치'에서 config.properties를 지능적으로 탐색 및 로드
      */
     private static void loadProperties() {
         Properties prop = new Properties();
-        File propFile = new File("config.properties");
+        File propFile = null;
 
-        if (propFile.exists()) {
+        try {
+            // 현재 클래스가 도출된 코드 소스(즉, JAR나 컴파일된 class 위치)의 URI 및 절대 경로 추출
+            String codePath = ConverterMain.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
+            if (codePath != null) {
+                File fileOrDir = new File(codePath);
+                // 만약 JAR 파일 형태라면 해당 파일의 부모 폴더를 지정, 일반 디렉토리라면 그 디렉토리를 지정
+                File baseDir = fileOrDir.isDirectory() ? fileOrDir : fileOrDir.getParentFile();
+                propFile = new File(baseDir, "config.properties");
+            }
+        } catch (Exception e) {
+            // 경로 계산 예외 발생 시 현재 위치 기준 상대 경로로 Fallback 가드 처리
+            propFile = new File("config.properties");
+        }
+
+        // 파일 물리 존재성 체크 후 안전 로드
+        if (propFile != null && propFile.exists()) {
             try (InputStream is = new FileInputStream(propFile)) {
                 prop.load(is);
+                System.out.println("✅ [설정 로드 성공] 파일 절대 경로: " + propFile.getAbsolutePath());
             } catch (IOException e) {
-                System.err.println("⚠️ config.properties 로드 실패, 기본값으로 대체합니다.");
+                System.err.println("⚠️ config.properties 파일은 찾았으나 읽기에 실패했습니다: " + e.getMessage());
+            }
+        } else {
+            System.err.println("⚠️ [경고] config.properties 파일을 찾지 못했습니다. 기본 내장 매핑 값으로 기동합니다.");
+            if (propFile != null) {
+                System.err.println("🔍 누락된 탐색 대상 경로: " + propFile.getAbsolutePath());
             }
         }
 
