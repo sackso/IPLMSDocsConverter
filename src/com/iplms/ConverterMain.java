@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class ConverterMain {
 
@@ -16,14 +18,16 @@ public class ConverterMain {
     private static String inputDirSetting;
     private static String outputDirSetting;
     private static int timeoutSeconds;
+    private static String reportExcelName; // properties 키 명칭 유지를 위해 변수명 유지 (실제 csv 저장됨)
+
+    // 멀티스레드 환경에서 순서 무관하게 안전하게 행 데이터를 수집하는 Thread-Safe 큐
+    private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
 
     public static void main(String[] args) {
-        // 📌 1. 시작 시 현재 프로그램이 바라보는 시스템 기준 실행 경로(Working Directory) 선언
         System.out.println("📂 [System 환경 정보] 현재 실행 경로 (User Dir): " + System.getProperty("user.dir"));
 
         loadProperties();
 
-        // 입력 폴더 설정 검증
         if (inputDirSetting == null || inputDirSetting.trim().isEmpty()) {
             System.err.println("❌ 오류: config.properties 파일에 converter.input.dir 설정이 누락되었거나 비어있습니다.");
             return;
@@ -40,40 +44,35 @@ public class ConverterMain {
         System.out.println("📌 설정된 출력 폴더: " + (outputDirSetting.isEmpty() ? "원본 파일과 동일 경로" : outputDirSetting));
         System.out.println("📌 LibreOffice 경로: " + libreOfficePath);
 
-        // 📌 2. 입력 폴더 이하의 모든 파일 재귀적(Recursive) 수집 파이프라인 기동
         List<File> targetFiles = new ArrayList<>();
         scanDirectory(inputDir, targetFiles);
 
         if (targetFiles.isEmpty()) {
-            System.out.println("⏭️ [알림] 입력 폴더 이하에서 변환 가능한 대상 문서(docx, doc, xlsx, xls, pptx, ppt, hwp)를 찾지 못했습니다.");
+            System.out.println("⏭️ [알림] 입력 폴더 이하에서 변환 가능한 대상 문서를 찾지 못했습니다.");
             return;
         }
 
         System.out.println("📊 [탐색 완료] 총 " + targetFiles.size() + "개의 대상 문서가 수집되었습니다. 스케줄러 풀로 진입합니다.");
 
-        // 설정값 기반 고정 스레드 풀 생성
         int threadCount = Integer.parseInt(System.getProperty("converter.threads", "2"));
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
 
-        // 출력 디렉토리 사전 검증 및 물리 폴더 확보
         File targetDir = null;
         if (outputDirSetting != null && !outputDirSetting.trim().isEmpty()) {
             targetDir = new File(outputDirSetting.trim());
             if (!targetDir.exists()) {
-                targetDir.mkdirs(); // 출력 폴더가 없으면 자동 생성
+                targetDir.mkdirs();
             }
         }
 
         for (File srcFile : targetFiles) {
             final File finalTargetDir = (targetDir != null) ? targetDir : srcFile.getParentFile();
 
-            // 스레드 풀에 개별 태스크 제출 (격리 실행)
             executor.submit(() -> {
                 String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
                 File destPdf = new File(finalTargetDir, baseName + ".pdf");
                 File destTxt = new File(finalTargetDir, baseName + ".txt");
 
-                // [덮어쓰기 가드] 기존 결과 파일이 있을 경우, 사전 물리적 삭제 진행
                 if (destPdf.exists()) {
                     System.out.println("♻️ [덮어쓰기] 기존 PDF 파일 제거 및 갱신: " + destPdf.getName());
                     destPdf.delete();
@@ -82,17 +81,27 @@ public class ConverterMain {
                     destTxt.delete();
                 }
 
-                // 타임아웃 가드(Future) 구동으로 행 걸림(Hang) 원천 방지
+                String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
+                String fileVersion = detectFileVersion(srcFile, ext);
+
+                ReportRow rowData = new ReportRow();
+                rowData.filePath = srcFile.getAbsolutePath();
+                rowData.fileName = srcFile.getName();
+                rowData.fileType = ext.toUpperCase() + " (" + fileVersion + ")";
+
                 ExecutorService singleTaskExecutor = Executors.newSingleThreadExecutor();
                 Future<Boolean> future = singleTaskExecutor.submit(() -> {
-                    // 1. 오피스 및 한글 공통 PDF 변환
-                    boolean isConverted = convertToPdf(srcFile, destPdf);
+                    boolean isConverted = convertToPdf(srcFile, destPdf, fileVersion);
                     if (isConverted && destPdf.exists()) {
-                        // 2. 변환된 PDF에서 깨끗하게 텍스트 추출
-                        extractTextFromPdf(destPdf, destTxt);
+                        rowData.pdfResult = "성공";
+                        boolean isExtracted = extractTextFromPdf(destPdf, destTxt);
+                        rowData.txtResult = isExtracted ? "성공" : "실패";
                         return true;
+                    } else {
+                        rowData.pdfResult = "실패";
+                        rowData.txtResult = "실패 (PDF 변환 실패됨)";
+                        return false;
                     }
-                    return false;
                 });
 
                 try {
@@ -101,16 +110,20 @@ public class ConverterMain {
                     System.err.println("⏰ [타임아웃] 변환 시간 초과 (" + timeoutSeconds + "초): " + srcFile.getName());
                     future.cancel(true);
                     writeErrorFile(srcFile, "변환 시간 초과 (" + timeoutSeconds + "초)", finalTargetDir);
+                    rowData.pdfResult = "실패 (타임아웃)";
+                    rowData.txtResult = "실패";
                 } catch (Exception e) {
                     System.err.println("❌ [런타임 에러]: " + srcFile.getName());
                     writeErrorFile(srcFile, e.getMessage(), finalTargetDir);
+                    rowData.pdfResult = "실패 (에러)";
+                    rowData.txtResult = "실패";
                 } finally {
+                    reportQueue.add(rowData);
                     singleTaskExecutor.shutdownNow();
                 }
             });
         }
 
-        // 스레드 정상 종료 대기 흐름 제어
         executor.shutdown();
         try {
             if (!executor.awaitTermination(60, TimeUnit.MINUTES)) {
@@ -119,46 +132,40 @@ public class ConverterMain {
         } catch (InterruptedException e) {
             executor.shutdownNow();
         }
-        System.out.println("🏁 [IPLMS Hybrid Converter] 모든 디렉토리 대기열 처리 프로세스 완료");
+
+        // 📌 모든 멀티스레드 완료 시점에 최종 CSV 리포트 출력
+        generateCsvReport(targetDir != null ? targetDir : inputDir);
+
+        System.out.println("🏁 [IPLMS Hybrid Converter] 모든 디렉토리 대기열 처리 및 CSV 리포트 저장 완료");
     }
 
-    /**
-     * 📌 [신규 추가] 디렉토리를 재귀적으로 순회하며 대상 확장자를 가진 파일들만 수집하는 메서드
-     */
     private static void scanDirectory(File dir, List<File> resultList) {
         File[] files = dir.listFiles();
         if (files == null) return;
 
         for (File file : files) {
             if (file.isDirectory()) {
-                // 하위 폴더인 경우 파고 들어감 (재귀 호출)
                 scanDirectory(file, resultList);
             } else {
                 String name = file.getName().toLowerCase();
-                // 오피스 문서 및 한글 문서 확장자 필터링
                 if (name.endsWith(".docx") || name.endsWith(".doc") ||
                         name.endsWith(".xlsx") || name.endsWith(".xls") ||
                         name.endsWith(".pptx") || name.endsWith(".ppt") ||
-                        name.endsWith(".hwp")) {
+                        name.endsWith(".hwp") || name.endsWith(".hwpx")) {
                     resultList.add(file);
                 }
             }
         }
     }
 
-    /**
-     * 확장자 분기별 PDF 변환 제어 핸들러
-     */
-    private static synchronized boolean convertToPdf(File srcFile, File destPdf) throws Exception {
+    private static boolean convertToPdf(File srcFile, File destPdf, String fileVersion) throws Exception {
         String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
-
-        System.out.println("🔄 [변환 시작] 포맷: [" + ext.toUpperCase() + "] 파일명: " + srcFile.getName());
+        System.out.println("🔄 [변환 시작] 포맷: [" + ext.toUpperCase() + "] | 문서 버전: [" + fileVersion + "] | 파일명: " + srcFile.getName());
 
         File outputDir = destPdf.getParentFile();
         ProcessBuilder pb;
 
-        if ("hwp".equals(ext)) {
-            // 한글 파일인 경우 HWP2002 전용 입력 필터(--infilter) 주입
+        if ("hwp".equals(ext) || "hwpx".equals(ext)) {
             pb = new ProcessBuilder(
                     libreOfficePath,
                     "--headless",
@@ -168,7 +175,6 @@ public class ConverterMain {
                     srcFile.getAbsolutePath()
             );
         } else {
-            // MS 오피스 계열 변환
             pb = new ProcessBuilder(
                     libreOfficePath,
                     "--headless",
@@ -178,11 +184,13 @@ public class ConverterMain {
             );
         }
 
-        Process process = pb.start();
-        int exitCode = process.waitFor();
+        int exitCode;
+        synchronized (ConverterMain.class) {
+            Process process = pb.start();
+            exitCode = process.waitFor();
+        }
 
         if (exitCode == 0) {
-            // 산출된 PDF 리네임 및 이동 정렬
             String defaultGeneratedName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.')) + ".pdf";
             File generatedPdf = new File(outputDir, defaultGeneratedName);
 
@@ -197,10 +205,85 @@ public class ConverterMain {
         return false;
     }
 
-    /**
-     * PDFBox 기반 고속 텍스트 추출 엔진
-     */
-    private static void extractTextFromPdf(File pdfFile, File destTxt) {
+    private static String detectFileVersion(File file, String ext) {
+        try {
+            if ("docx".equals(ext) || "xlsx".equals(ext) || "pptx".equals(ext) || "hwpx".equals(ext)) {
+                try (ZipInputStream zis = new ZipInputStream(new FileInputStream(file))) {
+                    ZipEntry entry;
+                    while ((entry = zis.getNextEntry()) != null) {
+                        if (("docx".equals(ext) || "xlsx".equals(ext) || "pptx".equals(ext))
+                                && "docProps/app.xml".equalsIgnoreCase(entry.getName())) {
+                            return parseTagValueFromStream(zis, "AppVersion", "MS Office 계열");
+                        }
+                        if ("hwpx".equals(ext) && "META-INF/manifest.xml".equalsIgnoreCase(entry.getName())) {
+                            return parseTagValueFromStream(zis, "version", "개방형 HWPX");
+                        }
+                    }
+                }
+            } else if ("hwp".equals(ext)) {
+                try (DataInputStream dis = new DataInputStream(new FileInputStream(file))) {
+                    byte[] headerBytes = new byte[64];
+                    dis.readFully(headerBytes);
+                    if ((headerBytes[0] == (byte)0xD0 && headerBytes[1] == (byte)0xCF && headerBytes[2] == (byte)0x11) ||
+                            new String(headerBytes, 0, 3, StandardCharsets.UTF_8).contains("HWP")) {
+
+                        int vMajor = headerBytes[39] & 0xFF;
+                        int vMinor = headerBytes[38] & 0xFF;
+                        int vBuild = headerBytes[37] & 0xFF;
+                        int vRevision = headerBytes[36] & 0xFF;
+
+                        if (vMajor >= 5) {
+                            return "v" + vMajor + "." + vMinor + "." + vBuild + "." + vRevision;
+                        }
+                    }
+                    return "v5.0 미만 구형";
+                }
+            } else if ("doc".equals(ext) || "xls".equals(ext) || "ppt".equals(ext)) {
+                return "97-2003 바이너리";
+            }
+        } catch (Exception e) {
+            return "식별 실패";
+        }
+        return "표준 규격";
+    }
+
+    private static String parseTagValueFromStream(InputStream is, String key, String defaultPrefix) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int len;
+        while ((len = is.read(buffer)) != -1) {
+            bos.write(buffer, 0, len);
+        }
+        String content = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+
+        if (content.contains(key)) {
+            if ("AppVersion".equals(key)) {
+                int start = content.indexOf("<AppVersion>");
+                int end = content.indexOf("</AppVersion>");
+                if (start != -1 && end != -1 && end > start) {
+                    String verNum = content.substring(start + 12, end).trim();
+                    if (verNum.startsWith("16")) return "2016/365 (" + verNum + ")";
+                    if (verNum.startsWith("15")) return "2013 (" + verNum + ")";
+                    if (verNum.startsWith("14")) return "2010 (" + verNum + ")";
+                    if (verNum.startsWith("12")) return "2007 (" + verNum + ")";
+                    return "v" + verNum;
+                }
+            } else if ("version".equals(key)) {
+                int idx = content.indexOf("version=\"");
+                if (idx == -1) idx = content.indexOf("version='");
+                if (idx != -1) {
+                    int start = idx + 9;
+                    int end = content.indexOf(content.charAt(idx + 8) == '"' ? "\"" : "'", start);
+                    if (end > start) {
+                        return "표준 v" + content.substring(start, end).trim();
+                    }
+                }
+            }
+        }
+        return defaultPrefix;
+    }
+
+    private static boolean extractTextFromPdf(File pdfFile, File destTxt) {
         try (PDDocument document = PDDocument.load(pdfFile)) {
             PDFTextStripper stripper = new PDFTextStripper();
             String text = stripper.getText(document);
@@ -210,14 +293,68 @@ public class ConverterMain {
                 writer.flush();
             }
             System.out.println("📝 [텍스트 추출 완료]: " + destTxt.getName());
+            return true;
         } catch (Exception e) {
             System.err.println("⚠️ [텍스트 추출 실패 - 패스]: " + pdfFile.getName() + " (" + e.getMessage() + ")");
+            return false;
         }
     }
 
     /**
-     * 오류 로그 작성기 (에러 파일도 출력 디렉토리로 생성 위치 보정)
+     * 📌 [핵심 신규 컴포넌트] 무결성 한글 연동 UTF-8 BOM 탑재 CSV 빌드 모듈
      */
+    private static void generateCsvReport(File exportFolder) {
+        File csvFile = new File(exportFolder, reportExcelName);
+        if (csvFile.exists()) {
+            csvFile.delete();
+        }
+
+        System.out.println("📊 [CSV 내보내기 개시] 최종 리포트를 작성합니다 -> " + csvFile.getAbsolutePath());
+
+        try (FileOutputStream fos = new FileOutputStream(csvFile);
+             // 📌 [중요] Excel 프로그램에서 CSV를 바로 더블클릭해 열 때 한글 깨짐을 원천 방지하기 위해 UTF-8 BOM(EF BB BF) 주입
+             BufferedOutputStream bos = new BufferedOutputStream(fos)) {
+
+            // BOM 삼총사 바이트 강제 주입
+            bos.write(new byte[]{(byte)0xEF, (byte)0xBB, (byte)0xBF});
+
+            int index = 1;
+            // 문자열 처리를 위해 OutputStreamWriter 바인딩
+            try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(bos, StandardCharsets.UTF_8))) {
+
+                // 1. 헤더 출력
+                pw.println("번호,파일경로,파일명,파일종류,pdf변환결과(성공/실패),텍스트추출결과");
+
+                // 2. 수집 데이터 출력 (CSV 문법에 특화된 컴포넌트 이스케이프 가드 적용)
+                for (ReportRow row : reportQueue) {
+                    pw.print(index++ + ",");
+                    pw.print(escapeCsv(row.filePath) + ",");
+                    pw.print(escapeCsv(row.fileName) + ",");
+                    pw.print(escapeCsv(row.fileType) + ",");
+                    pw.print(escapeCsv(row.pdfResult) + ",");
+                    pw.println(escapeCsv(row.txtResult)); // 줄바꿈
+                }
+                pw.flush();
+            }
+            System.out.println("✅ [CSV 리포트 생성 완료] 총 " + (index - 1) + "건의 변환 이력 저장 완료.");
+        } catch (Exception e) {
+            System.err.println("❌ CSV 보고서 생성 도중 물리적 디스크 에러가 발생했습니다: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 📌 [CSV 데이터 안전 가드] 경로 내에 콤마(,), 쌍따옴표("), 개행이 섞여있어 CSV 행 구조가 붕괴되는 현상 완전 예방
+     */
+    private static String escapeCsv(String value) {
+        if (value == null) return "";
+
+        // 내부에 콤마나 쌍따옴표가 들어있다면 값 전체를 쌍따옴표로 감싸고 기존 쌍따옴표는 두개("")로 이스케이프해야 안전합니다.
+        if (value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        }
+        return value;
+    }
+
     private static void writeErrorFile(File srcFile, String errMsg, File targetDir) {
         String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
         File errFile = new File(targetDir, baseName + "_ERR.txt");
@@ -234,9 +371,6 @@ public class ConverterMain {
         }
     }
 
-    /**
-     * 실행 중인 클래스(또는 JAR 파일)와 '동일한 위치'에서 config.properties를 탐색 및 로드
-     */
     private static void loadProperties() {
         Properties prop = new Properties();
         File propFile = null;
@@ -259,18 +393,22 @@ public class ConverterMain {
             } catch (IOException e) {
                 System.err.println("⚠️ config.properties 파일은 찾았으나 읽기에 실패했습니다: " + e.getMessage());
             }
-        } else {
-            System.err.println("⚠️ [경고] config.properties 파일을 찾지 못했습니다. 기본 내장 매핑 값으로 기동합니다.");
-            if (propFile != null) {
-                System.err.println("🔍 누락된 탐색 대상 경로: " + propFile.getAbsolutePath());
-            }
         }
 
         libreOfficePath = prop.getProperty("converter.libreoffice.path", "C:\\Program Files\\LibreOffice\\program\\soffice.exe");
         inputDirSetting = prop.getProperty("converter.input.dir", "");
         outputDirSetting = prop.getProperty("converter.output.dir", "");
         timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "30"));
+        reportExcelName = prop.getProperty("converter.report.excel.name", "conversion_report.csv");
 
         System.setProperty("converter.threads", prop.getProperty("converter.thread.count", "2"));
+    }
+
+    private static class ReportRow {
+        String filePath;
+        String fileName;
+        String fileType;
+        String pdfResult;
+        String txtResult;
     }
 }
