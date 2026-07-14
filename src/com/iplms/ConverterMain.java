@@ -18,7 +18,7 @@ public class ConverterMain {
     private static String inputDirSetting;
     private static String outputDirSetting;
     private static int timeoutSeconds;
-    private static String reportExcelName; // properties 키 명칭 유지를 위해 변수명 유지 (실제 csv 저장됨)
+    private static String reportExcelName;
 
     // 멀티스레드 환경에서 순서 무관하게 안전하게 행 데이터를 수집하는 Thread-Safe 큐
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
@@ -84,10 +84,17 @@ public class ConverterMain {
                 String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
                 String fileVersion = detectFileVersion(srcFile, ext);
 
+                // 📌 [신규 추가] 원본 파일 크기를 바이트 단위로 구한 뒤 KB 단위로 환산 (소수점 2자리 정밀 포맷)
+                double fileSizeKb = srcFile.length() / 1024.0;
+                String formattedSize = String.format("%.2f", fileSizeKb);
+
                 ReportRow rowData = new ReportRow();
                 rowData.filePath = srcFile.getAbsolutePath();
                 rowData.fileName = srcFile.getName();
                 rowData.fileType = ext.toUpperCase() + " (" + fileVersion + ")";
+                rowData.fileSize = formattedSize; // 데이터 적재
+
+                long startTime = System.nanoTime();
 
                 ExecutorService singleTaskExecutor = Executors.newSingleThreadExecutor();
                 Future<Boolean> future = singleTaskExecutor.submit(() -> {
@@ -118,6 +125,15 @@ public class ConverterMain {
                     rowData.pdfResult = "실패 (에러)";
                     rowData.txtResult = "실패";
                 } finally {
+                    long endTime = System.nanoTime();
+                    double elapsedTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
+                    rowData.elapsedTime = String.format("%.2f", elapsedTimeSeconds);
+
+                    // 📌 [요구사항 반영] 변환 종료 로그 출력에 파일 용량(KB) 지표 동적 결합
+                    System.out.println("🏁 [변환 종료 완료] 파일명: " + srcFile.getName()
+                            + " | 용량: " + rowData.fileSize + " KB"
+                            + " | 소요시간: " + rowData.elapsedTime + "초");
+
                     reportQueue.add(rowData);
                     singleTaskExecutor.shutdownNow();
                 }
@@ -133,7 +149,7 @@ public class ConverterMain {
             executor.shutdownNow();
         }
 
-        // 📌 모든 멀티스레드 완료 시점에 최종 CSV 리포트 출력
+        // 모든 멀티스레드 완료 시점에 최종 CSV 리포트 출력
         generateCsvReport(targetDir != null ? targetDir : inputDir);
 
         System.out.println("🏁 [IPLMS Hybrid Converter] 모든 디렉토리 대기열 처리 및 CSV 리포트 저장 완료");
@@ -301,7 +317,7 @@ public class ConverterMain {
     }
 
     /**
-     * 📌 [핵심 신규 컴포넌트] 무결성 한글 연동 UTF-8 BOM 탑재 CSV 빌드 모듈
+     * 최종 CSV 리포트 생성기 (파일용량 KB 컬럼 안정 추가 완료)
      */
     private static void generateCsvReport(File exportFolder) {
         File csvFile = new File(exportFolder, reportExcelName);
@@ -311,28 +327,28 @@ public class ConverterMain {
 
         System.out.println("📊 [CSV 내보내기 개시] 최종 리포트를 작성합니다 -> " + csvFile.getAbsolutePath());
 
+        int index = 1;
+
         try (FileOutputStream fos = new FileOutputStream(csvFile);
-             // 📌 [중요] Excel 프로그램에서 CSV를 바로 더블클릭해 열 때 한글 깨짐을 원천 방지하기 위해 UTF-8 BOM(EF BB BF) 주입
              BufferedOutputStream bos = new BufferedOutputStream(fos)) {
 
-            // BOM 삼총사 바이트 강제 주입
             bos.write(new byte[]{(byte)0xEF, (byte)0xBB, (byte)0xBF});
 
-            int index = 1;
-            // 문자열 처리를 위해 OutputStreamWriter 바인딩
             try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(bos, StandardCharsets.UTF_8))) {
 
-                // 1. 헤더 출력
-                pw.println("번호,파일경로,파일명,파일종류,pdf변환결과(성공/실패),텍스트추출결과");
+                // 📌 [수정] 파일용량(KB) 컬럼 헤더 안정 바인딩
+                pw.println("번호,파일경로,파일명,파일종류,pdf변환결과(성공/실패),텍스트추출결과,파일용량(KB),소요시간(초)");
 
-                // 2. 수집 데이터 출력 (CSV 문법에 특화된 컴포넌트 이스케이프 가드 적용)
+                // 수집 데이터 출력 (BOM 및 콤마 가드 적용)
                 for (ReportRow row : reportQueue) {
                     pw.print(index++ + ",");
                     pw.print(escapeCsv(row.filePath) + ",");
                     pw.print(escapeCsv(row.fileName) + ",");
                     pw.print(escapeCsv(row.fileType) + ",");
                     pw.print(escapeCsv(row.pdfResult) + ",");
-                    pw.println(escapeCsv(row.txtResult)); // 줄바꿈
+                    pw.print(escapeCsv(row.txtResult) + ",");
+                    pw.print(escapeCsv(row.fileSize) + ","); // 📌 파일 용량 데이터 출력
+                    pw.println(escapeCsv(row.elapsedTime));
                 }
                 pw.flush();
             }
@@ -342,13 +358,8 @@ public class ConverterMain {
         }
     }
 
-    /**
-     * 📌 [CSV 데이터 안전 가드] 경로 내에 콤마(,), 쌍따옴표("), 개행이 섞여있어 CSV 행 구조가 붕괴되는 현상 완전 예방
-     */
     private static String escapeCsv(String value) {
         if (value == null) return "";
-
-        // 내부에 콤마나 쌍따옴표가 들어있다면 값 전체를 쌍따옴표로 감싸고 기존 쌍따옴표는 두개("")로 이스케이프해야 안전합니다.
         if (value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")) {
             return "\"" + value.replace("\"", "\"\"") + "\"";
         }
@@ -410,5 +421,7 @@ public class ConverterMain {
         String fileType;
         String pdfResult;
         String txtResult;
+        String elapsedTime;
+        String fileSize; // 📌 신규 추가
     }
 }
