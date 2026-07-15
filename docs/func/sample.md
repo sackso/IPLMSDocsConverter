@@ -1,0 +1,46 @@
+# [FN-260715-01] MS Office (Word, PPT, Excel) -> PDF 변환 기능
+
+- **담당자:** 담당 개발자
+- **문서 등록일:** 2026-07-15
+- **프로젝트명:** Java 기반 문서 변환 시스템 고도화
+- **상태:** `작업 중 (In Progress)`
+
+---
+
+## 1. 개요 및 요구사항 (Requirements)
+
+### 1.1 개요
+Word(.docx), PowerPoint(.pptx), Excel(.xlsx) 포맷의 파일을 LibreOffice API 또는 CLI를 호출하여 원본 레이아웃 훼손 없이 PDF로 변환한다.
+
+### 1.2 요구사항 상세
+- [ ] Word (.doc, .docx) 파일 변환
+- [ ] PowerPoint (.ppt, .pptx) 파일 변환
+- [ ] Excel (.xls, .xlsx) 파일 변환 (시트 깨짐 및 영역 잘림 방지 옵션 적용)
+
+---
+
+## 2. 기술 설계 (Technical Design)
+
+### 2.1 설계 요약
+- ProcessBuilder를 통해 `soffice --headless --convert-to pdf --outdir [output_dir] [input_file]` 수행. Excel 변환 시 인쇄 영역 설정을 읽도록 유도.
+
+### 2.2 예정 사항 (Next Steps)
+- [ ] AutoCAD(DWG/DXF) 파일을 PDF로 변환하는 모듈 연구 및 추가 설계 (LibreOffice 외에 제3의 렌더러 연동 검토)
+- [ ] 서버 구동 환경(OS별 LibreOffice 패키지 설치 및 폰트 수동 설치)을 정리한 설치 가이드(Setup Guide) 문서 작성
+
+---
+
+## 3. 테스트 케이스 (Test Cases)
+
+### 3.1 단위 및 통합 테스트 시나리오
+- [ ] Word -> PDF 변환 테스트 및 레이아웃 깨짐 확인
+- [ ] PowerPoint -> PDF 변환 테스트 및 폰트 깨짐 확인
+- [ ] Excel -> PDF 변환 테스트 (Multi-sheet 처리 확인)
+
+---
+
+## 4. Git 및 작업 이력 가이드 (Git History Guide)
+
+### 4.1 커밋 메시지 규칙
+- **최초 구현 커밋:** `feat: [FN-260715-01] [MS오피스PDF변환] 최초 기능 구현 및 API 설계`
+- **리팩토링 및 버그 수정:** `refactor: [FN-260715-01] [MS오피스PDF변환] 예외 처리 로직 추가 및 가독성 개선`
