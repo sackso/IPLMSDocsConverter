@@ -48,11 +48,11 @@ public class ConverterMain {
         scanDirectory(inputDir, targetFiles);
 
         if (targetFiles.isEmpty()) {
-            System.out.println("⏭️ [알림] 입력 폴더 이하에서 변환 가능한 대상 문서를 찾지 못했습니다.");
+            System.out.println("⏭️ [알림] 입력 폴더 이하에서 변환 가능한 대상 문서를 찾지 못했습니다.\n\n");
             return;
         }
 
-        System.out.println("📊 [탐색 완료] 총 " + targetFiles.size() + "개의 대상 문서가 수집되었습니다. 순차 엔진을 기동합니다.");
+        System.out.println("📊 [탐색 완료] 총 " + targetFiles.size() + "개의 대상 문서가 수집되었습니다. 순차 엔진을 기동합니다.\n\n");
 
         File targetDir = null;
         if (outputDirSetting != null && !outputDirSetting.trim().isEmpty()) {
@@ -178,7 +178,7 @@ public class ConverterMain {
                 if (name.endsWith(".docx") || name.endsWith(".doc") ||
                         name.endsWith(".xlsx") || name.endsWith(".xls") ||
                         name.endsWith(".pptx") || name.endsWith(".ppt") ||
-                        name.endsWith(".hwp") || name.endsWith(".hwpx")) {
+                        name.endsWith(".hwpx") || name.endsWith(".hwp")) {
                     resultList.add(file);
                 }
             }
@@ -327,6 +327,12 @@ public class ConverterMain {
         }
     }
 
+    /**
+     * CSV 파일로 Report 작성
+     * @param exportFolder
+     * @since 2026-07-20
+     * @author shpark
+     */
     private static void generateCsvReport(File exportFolder) {
         File csvFile = new File(exportFolder, reportExcelName);
         if (csvFile.exists()) {
