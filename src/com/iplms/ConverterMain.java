@@ -4,6 +4,9 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 
 import java.io.*;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryMXBean;
+import java.lang.management.MemoryUsage;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,151 +22,201 @@ public class ConverterMain {
     private static String outputDirSetting;
     private static int timeoutSeconds;
     private static String reportExcelName;
+    private static int daemonIntervalMinutes;
 
     // 안전하게 행 데이터를 수집하는 Thread-Safe 큐
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
+    private static final long MEMORY_LIMIT_BYTES = 2L * 1024 * 1024 * 1024; // 2GB
 
     public static void main(String[] args) {
         System.out.println("📂 [System 환경 정보] 현재 실행 경로 (User Dir): " + System.getProperty("user.dir"));
-
         loadProperties();
 
-        if (inputDirSetting == null || inputDirSetting.trim().isEmpty()) {
-            System.err.println("❌ 오류: config.properties 파일에 converter.input.dir 설정이 누락되었거나 비어있습니다.");
-            return;
-        }
+        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        System.out.println("🚀 [IPLMS Hybrid Converter] 데몬 모드로 시작합니다. 실행 주기: " + daemonIntervalMinutes + "분");
 
-        File inputDir = new File(inputDirSetting.trim());
-        if (!inputDir.exists() || !inputDir.isDirectory()) {
-            System.err.println("❌ 오류: 설정된 입력 폴더가 존재하지 않거나 디렉토리가 아닙니다 -> " + inputDir.getAbsolutePath());
-            return;
-        }
+        // 즉시 1회 실행 후, 설정된 주기에 따라 반복 실행
+        scheduler.scheduleAtFixedRate(ConverterMain::runConversionCycle, 0, daemonIntervalMinutes, TimeUnit.MINUTES);
+    }
 
-        System.out.println("🚀 [IPLMS Hybrid Converter] 폴더 탐색 및 안전 순차 변환 가동 개시");
-        System.out.println("📌 탐색 대상 입력 폴더: " + inputDir.getAbsolutePath());
-        System.out.println("📌 설정된 출력 폴더: " + (outputDirSetting.isEmpty() ? "원본 파일과 동일 경로" : outputDirSetting));
-        System.out.println("📌 LibreOffice 경로: " + libreOfficePath);
+    private static void runConversionCycle() {
+        try {
+            System.out.println("\n\n=====================================================");
+            System.out.println("⏰ [" + new java.util.Date() + "] 정기 변환 작업을 시작합니다.");
+            System.out.println("=====================================================");
 
-        List<File> targetFiles = new ArrayList<>();
-        scanDirectory(inputDir, targetFiles);
+            checkMemoryAndExitIfNeeded();
 
-        if (targetFiles.isEmpty()) {
-            System.out.println("⏭️ [알림] 입력 폴더 이하에서 변환 가능한 대상 문서를 찾지 못했습니다.\n\n");
-            return;
-        }
-
-        System.out.println("📊 [탐색 완료] 총 " + targetFiles.size() + "개의 대상 문서가 수집되었습니다. 순차 엔진을 기동합니다.\n\n");
-
-        File targetDir = null;
-        if (outputDirSetting != null && !outputDirSetting.trim().isEmpty()) {
-            targetDir = new File(outputDirSetting.trim());
-            if (!targetDir.exists()) {
-                targetDir.mkdirs();
+            if (inputDirSetting == null || inputDirSetting.trim().isEmpty()) {
+                System.err.println("❌ 오류: config.properties 파일에 converter.input.dir 설정이 누락되었거나 비어있습니다.");
+                return;
             }
-        }
 
-        // 📌 [수정 방향 1] 파일 변환을 '1개씩' 안전하게 순차 처리하기 위한 단일 워커 스레드 풀 할당
-        ExecutorService conversionExecutor = Executors.newSingleThreadExecutor();
+            File inputDir = new File(inputDirSetting.trim());
+            if (!inputDir.exists() || !inputDir.isDirectory()) {
+                System.err.println("❌ 오류: 설정된 입력 폴더가 존재하지 않거나 디렉토리가 아닙니다 -> " + inputDir.getAbsolutePath());
+                return;
+            }
 
-        for (File srcFile : targetFiles) {
-            final File finalTargetDir = (targetDir != null) ? targetDir : srcFile.getParentFile();
+            System.out.println("🚀 [IPLMS Hybrid Converter] 폴더 탐색 및 안전 순차 변환 가동 개시");
+            System.out.println("📌 탐색 대상 입력 폴더: " + inputDir.getAbsolutePath());
+            System.out.println("📌 설정된 출력 폴더: " + (outputDirSetting.isEmpty() ? "원본 파일과 동일 경로" : outputDirSetting));
+            System.out.println("📌 LibreOffice 경로: " + libreOfficePath);
 
-            // 개별 파일 변환 타스크 정의
-            Callable<Boolean> conversionTask = () -> {
-                String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
-                File destPdf = new File(finalTargetDir, baseName + ".pdf");
-                File destTxt = new File(finalTargetDir, baseName + ".txt");
+            List<File> targetFiles = new ArrayList<>();
+            scanDirectory(inputDir, targetFiles);
 
-                if (destPdf.exists()) {
-                    System.out.println("♻️ [덮어쓰기] 기존 PDF 파일 제거 및 갱신: " + destPdf.getName());
-                    destPdf.delete();
+            if (targetFiles.isEmpty()) {
+                System.out.println("⏭️ [알림] 입력 폴더 이하에서 변환 가능한 대상 문서를 찾지 못했습니다.");
+                return;
+            }
+
+            System.out.println("📊 [탐색 완료] 총 " + targetFiles.size() + "개의 대상 문서가 수집되었습니다. 순차 엔진을 기동합니다.\n\n");
+
+            File targetDir = null;
+            if (outputDirSetting != null && !outputDirSetting.trim().isEmpty()) {
+                targetDir = new File(outputDirSetting.trim());
+                if (!targetDir.exists()) {
+                    targetDir.mkdirs();
                 }
-                if (destTxt.exists()) {
-                    destTxt.delete();
-                }
+            }
 
-                String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
-                String fileVersion = detectFileVersion(srcFile, ext);
+            ExecutorService conversionExecutor = Executors.newSingleThreadExecutor();
+            reportQueue.clear(); // 새 주기 시작 시 큐 초기화
 
-                double fileSizeKb = srcFile.length() / 1024.0;
-                String formattedSize = String.format("%.2f", fileSizeKb);
+            for (File srcFile : targetFiles) {
+                final File finalTargetDir = (targetDir != null) ? targetDir : srcFile.getParentFile();
 
-                ReportRow rowData = new ReportRow();
-                rowData.filePath = srcFile.getAbsolutePath();
-                rowData.fileName = srcFile.getName();
-                rowData.fileType = ext.toUpperCase() + " (" + fileVersion + ")";
-                rowData.fileSize = formattedSize;
+                Callable<Boolean> conversionTask = () -> {
+                    String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
+                    File destPdf = new File(finalTargetDir, baseName + ".pdf");
+                    File destTxt = new File(finalTargetDir, baseName + ".txt");
 
-                long startTime = System.nanoTime();
-                boolean success = false;
+                    if (destPdf.exists()) {
+                        System.out.println("♻️ [덮어쓰기] 기존 PDF 파일 제거 및 갱신: " + destPdf.getName());
+                        destPdf.delete();
+                    }
+                    if (destTxt.exists()) {
+                        destTxt.delete();
+                    }
+
+                    String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
+                    String fileVersion = detectFileVersion(srcFile, ext);
+
+                    double fileSizeKb = srcFile.length() / 1024.0;
+                    String formattedSize = String.format("%.2f", fileSizeKb);
+
+                    ReportRow rowData = new ReportRow();
+                    rowData.filePath = srcFile.getAbsolutePath();
+                    rowData.fileName = srcFile.getName();
+                    rowData.fileType = ext.toUpperCase() + " (" + fileVersion + ")";
+                    rowData.fileSize = formattedSize;
+
+                    long startTime = System.nanoTime();
+
+                    try {
+                        boolean isConverted = convertToPdf(srcFile, destPdf, fileVersion);
+                        if (isConverted && destPdf.exists()) {
+                            rowData.pdfResult = "성공";
+                            boolean isExtracted = extractTextFromPdf(destPdf, destTxt);
+                            rowData.txtResult = isExtracted ? "성공" : "실패";
+                        } else {
+                            rowData.pdfResult = "실패";
+                            rowData.txtResult = "실패 (PDF 변환 실패됨)";
+                        }
+                    } catch (Exception e) {
+                        System.err.println("❌ [런타임 에러]: " + srcFile.getName());
+                        writeErrorFile(srcFile, e.getMessage(), finalTargetDir);
+                        rowData.pdfResult = "실패 (에러)";
+                        rowData.txtResult = "실패";
+                    } finally {
+                        long endTime = System.nanoTime();
+                        double elapsedTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
+                        rowData.elapsedTime = String.format("%.2f", elapsedTimeSeconds);
+
+                        System.out.println("🏁 [변환 종료] 파일명: " + srcFile.getName()
+                                + " | 용량: " + rowData.fileSize + " KB"
+                                + " | 소요시간: " + rowData.elapsedTime + "초");
+
+                        reportQueue.add(rowData);
+                    }
+                    return true;
+                };
+
+                Future<Boolean> future = conversionExecutor.submit(conversionTask);
 
                 try {
-                    // 실제 리브레오피스 CLI 프로세스 구동 및 변환 수행
-                    boolean isConverted = convertToPdf(srcFile, destPdf, fileVersion);
-                    if (isConverted && destPdf.exists()) {
-                        rowData.pdfResult = "성공";
-                        boolean isExtracted = extractTextFromPdf(destPdf, destTxt);
-                        rowData.txtResult = isExtracted ? "성공" : "실패";
-                        success = true;
-                    } else {
-                        rowData.pdfResult = "실패";
-                        rowData.txtResult = "실패 (PDF 변환 실패됨)";
-                    }
+                    future.get(timeoutSeconds, TimeUnit.SECONDS);
+                } catch (TimeoutException e) {
+                    System.err.println("⏰ [타임아웃] 변환 시간 초과 (" + timeoutSeconds + "초 제한): " + srcFile.getName());
+                    future.cancel(true);
+
+                    ReportRow timeoutRow = new ReportRow();
+                    timeoutRow.filePath = srcFile.getAbsolutePath();
+                    timeoutRow.fileName = srcFile.getName();
+                    timeoutRow.fileType = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toUpperCase();
+                    timeoutRow.fileSize = String.format("%.2f", srcFile.length() / 1024.0);
+                    timeoutRow.pdfResult = "실패 (타임아웃)";
+                    timeoutRow.txtResult = "실패";
+                    timeoutRow.elapsedTime = String.valueOf(timeoutSeconds) + ".00";
+
+                    reportQueue.add(timeoutRow);
+                    writeErrorFile(srcFile, "제한시간 " + timeoutSeconds + "초 초과로 인한 강제 중단", finalTargetDir);
                 } catch (Exception e) {
-                    System.err.println("❌ [런타임 에러]: " + srcFile.getName());
-                    writeErrorFile(srcFile, e.getMessage(), finalTargetDir);
-                    rowData.pdfResult = "실패 (에러)";
-                    rowData.txtResult = "실패";
-                } finally {
-                    long endTime = System.nanoTime();
-                    double elapsedTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
-                    rowData.elapsedTime = String.format("%.2f", elapsedTimeSeconds);
-
-                    System.out.println("🏁 [변환 종료] 파일명: " + srcFile.getName()
-                            + " | 용량: " + rowData.fileSize + " KB"
-                            + " | 소요시간: " + rowData.elapsedTime + "초");
-
-                    // 📌 [수정 방향 2] 개별 파일의 결과가 나오는 즉시 메인 큐에 누적 적재
-                    reportQueue.add(rowData);
+                    System.err.println("⚠️ [경고] 내부 스레드 제어 오류 패스: " + srcFile.getName() + " -> " + e.getMessage());
                 }
-                return success;
-            };
+            }
 
-            // 워커 풀에 타스크 투하
-            Future<Boolean> future = conversionExecutor.submit(conversionTask);
+            conversionExecutor.shutdown();
+            try {
+                if (!conversionExecutor.awaitTermination(5, TimeUnit.MINUTES)) {
+                    conversionExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                conversionExecutor.shutdownNow();
+            }
+
+            if (!reportQueue.isEmpty()) {
+                generateCsvReport(targetDir != null ? targetDir : inputDir);
+            }
+
+            System.out.println("🏁 [IPLMS Hybrid Converter] 모든 디렉토리 대기열 처리 및 CSV 리포트 저장 완료");
+
+        } catch (Exception e) {
+            System.err.println("❌ 주기 작업 실행 중 예상치 못한 오류 발생: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private static void checkMemoryAndExitIfNeeded() {
+        MemoryMXBean memoryBean = ManagementFactory.getMemoryMXBean();
+        MemoryUsage heapMemoryUsage = memoryBean.getHeapMemoryUsage();
+        long usedMemory = heapMemoryUsage.getUsed();
+
+        System.out.printf("🧠 [메모리 확인] 현재 사용량: %.2f MB%n", usedMemory / (1024.0 * 1024.0));
+
+        if (usedMemory > MEMORY_LIMIT_BYTES) {
+            System.err.println("⚠️ [메모리 경고] 사용량이 임계값(2GB)을 초과했습니다. 강제 GC를 실행합니다.");
+            System.gc();
 
             try {
-                // 📌 [수정 방향 1] 지정된 제한 시간(config 설정값, 예: 90초) 동안 메인 스레드가 블로킹 대기 수행
-                future.get(timeoutSeconds, TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                System.err.println("⏰ [타임아웃] 변환 시간 초과 (" + timeoutSeconds + "초 제한): " + srcFile.getName());
-                future.cancel(true); // 강제 인터럽트
+                // GC가 실행될 시간을 잠시 줍니다.
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
 
-                // 타임아웃 예외 상황 발생 시에도 리포트 이력 유실 방지를 위해 수동 복구 적재 후 계속 진행
-                ReportRow timeoutRow = new ReportRow();
-                timeoutRow.filePath = srcFile.getAbsolutePath();
-                timeoutRow.fileName = srcFile.getName();
-                timeoutRow.fileType = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toUpperCase();
-                timeoutRow.fileSize = String.format("%.2f", srcFile.length() / 1024.0);
-                timeoutRow.pdfResult = "실패 (타임아웃)";
-                timeoutRow.txtResult = "실패";
-                timeoutRow.elapsedTime = String.valueOf(timeoutSeconds) + ".00";
+            heapMemoryUsage = memoryBean.getHeapMemoryUsage();
+            usedMemory = heapMemoryUsage.getUsed();
+            System.out.printf("🧠 [메모리 재확인] GC 후 사용량: %.2f MB%n", usedMemory / (1024.0 * 1024.0));
 
-                reportQueue.add(timeoutRow);
-                writeErrorFile(srcFile, "제한시간 " + timeoutSeconds + "초 초과로 인한 강제 중단", finalTargetDir);
-            } catch (Exception e) {
-                // 📌 [수정 방향 3] 스레드 실행 중 예상치 못한 크래시가 발생해도 메인 루프는 절대 중단되지 않고 다음 파일로 이행
-                System.err.println("⚠️ [경고] 내부 스레드 제어 오류 패스: " + srcFile.getName() + " -> " + e.getMessage());
+            if (usedMemory > MEMORY_LIMIT_BYTES) {
+                String errorMessage = "메모리 확보 실패. GC 실행 후에도 사용량이 2GB를 초과하여 시스템을 강제 종료합니다.";
+                System.err.println("❌ [치명적 오류] " + errorMessage);
+                writeSystemErrorFile(errorMessage);
+                System.exit(1);
             }
         }
-
-        // 모든 루프 종료 후 싱글 풀 셧다운 마감
-        conversionExecutor.shutdown();
-
-        // 📌 [결과 보증] 100% 모든 파일의 순차 변환이 안전하게 끝난 완전무결한 시점에 단 한 번 CSV 출력 수행
-        generateCsvReport(targetDir != null ? targetDir : inputDir);
-
-        System.out.println("🏁 [IPLMS Hybrid Converter] 모든 디렉토리 대기열 처리 및 CSV 리포트 저장 완료");
     }
 
     private static void scanDirectory(File dir, List<File> resultList) {
@@ -211,11 +264,14 @@ public class ConverterMain {
             );
         }
 
-        int exitCode;
-        synchronized (ConverterMain.class) {
-            Process process = pb.start();
-            exitCode = process.waitFor();
+        Process process = pb.start();
+        // 타임아웃을 포함한 프로세스 대기
+        if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new TimeoutException("LibreOffice 프로세스가 " + timeoutSeconds + "초 내에 완료되지 않았습니다.");
         }
+
+        int exitCode = process.exitValue();
 
         if (exitCode == 0) {
             String defaultGeneratedName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.')) + ".pdf";
@@ -317,7 +373,6 @@ public class ConverterMain {
 
             try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(destTxt), StandardCharsets.UTF_8))) {
                 writer.write(text);
-                writer.flush();
             }
             System.out.println("📝 [텍스트 추출 완료]: " + destTxt.getName());
             return true;
@@ -327,12 +382,6 @@ public class ConverterMain {
         }
     }
 
-    /**
-     * CSV 파일로 Report 작성
-     * @param exportFolder
-     * @since 2026-07-20
-     * @author shpark
-     */
     private static void generateCsvReport(File exportFolder) {
         File csvFile = new File(exportFolder, reportExcelName);
         if (csvFile.exists()) {
@@ -362,7 +411,6 @@ public class ConverterMain {
                     pw.print(escapeCsv(row.fileSize) + ",");
                     pw.println(escapeCsv(row.elapsedTime));
                 }
-                pw.flush();
             }
             System.out.println("✅ [CSV 리포트 생성 완료] 총 " + (index - 1) + "건의 변환 이력 저장 완료.");
         } catch (Exception e) {
@@ -388,9 +436,22 @@ public class ConverterMain {
             pw.println("대상 원본 파일: " + srcFile.getAbsolutePath());
             pw.println("발생 시각: " + new java.util.Date());
             pw.println("오류 세부 명세: " + errMsg);
-            pw.flush();
         } catch (Exception e) {
             System.err.println("❌ 에러 로그 파일 쓰기 실패: " + e.getMessage());
+        }
+    }
+
+    private static void writeSystemErrorFile(String errMsg) {
+        File baseDir = new File(System.getProperty("user.dir"));
+        File errFile = new File(baseDir, "SYSTEM_FATAL_ERROR.txt");
+        try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(new FileOutputStream(errFile), StandardCharsets.UTF_8))) {
+            pw.println("=====================================================");
+            pw.println("❌ IPLMS 시스템 치명적 오류 리포트");
+            pw.println("=====================================================");
+            pw.println("발생 시각: " + new java.util.Date());
+            pw.println("오류 세부 명세: " + errMsg);
+        } catch (Exception e) {
+            System.err.println("❌ 시스템 에러 로그 파일 쓰기 실패: " + e.getMessage());
         }
     }
 
@@ -400,11 +461,8 @@ public class ConverterMain {
 
         try {
             String codePath = ConverterMain.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
-            if (codePath != null) {
-                File fileOrDir = new File(codePath);
-                File baseDir = fileOrDir.isDirectory() ? fileOrDir : fileOrDir.getParentFile();
-                propFile = new File(baseDir, "config.properties");
-            }
+            File baseDir = new File(codePath).getParentFile();
+            propFile = new File(baseDir, "config.properties");
         } catch (Exception e) {
             propFile = new File("config.properties");
         }
@@ -421,10 +479,12 @@ public class ConverterMain {
         libreOfficePath = prop.getProperty("converter.libreoffice.path", "C:\\Program Files\\LibreOffice\\program\\soffice.exe");
         inputDirSetting = prop.getProperty("converter.input.dir", "");
         outputDirSetting = prop.getProperty("converter.output.dir", "");
-        timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "30"));
+        timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "90"));
         reportExcelName = prop.getProperty("converter.report.excel.name", "conversion_report.csv");
+        daemonIntervalMinutes = Integer.parseInt(prop.getProperty("daemon.interval.minutes", "10"));
 
-        System.setProperty("converter.threads", prop.getProperty("converter.thread.count", "2"));
+        // 이 설정은 현재 코드에서 직접 사용되지 않으므로 제거하거나 주석 처리할 수 있습니다.
+        // System.setProperty("converter.threads", prop.getProperty("converter.thread.count", "2"));
     }
 
     private static class ReportRow {
