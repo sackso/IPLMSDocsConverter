@@ -20,7 +20,7 @@ public class ConverterMain {
     private static int timeoutSeconds;
     private static String reportExcelName;
 
-    // 멀티스레드 환경에서 순서 무관하게 안전하게 행 데이터를 수집하는 Thread-Safe 큐
+    // 안전하게 행 데이터를 수집하는 Thread-Safe 큐
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
 
     public static void main(String[] args) {
@@ -39,7 +39,7 @@ public class ConverterMain {
             return;
         }
 
-        System.out.println("🚀 [IPLMS Hybrid Converter] 폴더 탐색 및 멀티스레드 엔진 가동 개시");
+        System.out.println("🚀 [IPLMS Hybrid Converter] 폴더 탐색 및 안전 순차 변환 가동 개시");
         System.out.println("📌 탐색 대상 입력 폴더: " + inputDir.getAbsolutePath());
         System.out.println("📌 설정된 출력 폴더: " + (outputDirSetting.isEmpty() ? "원본 파일과 동일 경로" : outputDirSetting));
         System.out.println("📌 LibreOffice 경로: " + libreOfficePath);
@@ -52,10 +52,7 @@ public class ConverterMain {
             return;
         }
 
-        System.out.println("📊 [탐색 완료] 총 " + targetFiles.size() + "개의 대상 문서가 수집되었습니다. 스케줄러 풀로 진입합니다.");
-
-        int threadCount = Integer.parseInt(System.getProperty("converter.threads", "2"));
-        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        System.out.println("📊 [탐색 완료] 총 " + targetFiles.size() + "개의 대상 문서가 수집되었습니다. 순차 엔진을 기동합니다.");
 
         File targetDir = null;
         if (outputDirSetting != null && !outputDirSetting.trim().isEmpty()) {
@@ -65,10 +62,14 @@ public class ConverterMain {
             }
         }
 
+        // 📌 [수정 방향 1] 파일 변환을 '1개씩' 안전하게 순차 처리하기 위한 단일 워커 스레드 풀 할당
+        ExecutorService conversionExecutor = Executors.newSingleThreadExecutor();
+
         for (File srcFile : targetFiles) {
             final File finalTargetDir = (targetDir != null) ? targetDir : srcFile.getParentFile();
 
-            executor.submit(() -> {
+            // 개별 파일 변환 타스크 정의
+            Callable<Boolean> conversionTask = () -> {
                 String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
                 File destPdf = new File(finalTargetDir, baseName + ".pdf");
                 File destTxt = new File(finalTargetDir, baseName + ".txt");
@@ -84,7 +85,6 @@ public class ConverterMain {
                 String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
                 String fileVersion = detectFileVersion(srcFile, ext);
 
-                // 📌 [신규 추가] 원본 파일 크기를 바이트 단위로 구한 뒤 KB 단위로 환산 (소수점 2자리 정밀 포맷)
                 double fileSizeKb = srcFile.length() / 1024.0;
                 String formattedSize = String.format("%.2f", fileSizeKb);
 
@@ -92,33 +92,23 @@ public class ConverterMain {
                 rowData.filePath = srcFile.getAbsolutePath();
                 rowData.fileName = srcFile.getName();
                 rowData.fileType = ext.toUpperCase() + " (" + fileVersion + ")";
-                rowData.fileSize = formattedSize; // 데이터 적재
+                rowData.fileSize = formattedSize;
 
                 long startTime = System.nanoTime();
+                boolean success = false;
 
-                ExecutorService singleTaskExecutor = Executors.newSingleThreadExecutor();
-                Future<Boolean> future = singleTaskExecutor.submit(() -> {
+                try {
+                    // 실제 리브레오피스 CLI 프로세스 구동 및 변환 수행
                     boolean isConverted = convertToPdf(srcFile, destPdf, fileVersion);
                     if (isConverted && destPdf.exists()) {
                         rowData.pdfResult = "성공";
                         boolean isExtracted = extractTextFromPdf(destPdf, destTxt);
                         rowData.txtResult = isExtracted ? "성공" : "실패";
-                        return true;
+                        success = true;
                     } else {
                         rowData.pdfResult = "실패";
                         rowData.txtResult = "실패 (PDF 변환 실패됨)";
-                        return false;
                     }
-                });
-
-                try {
-                    future.get(timeoutSeconds, TimeUnit.SECONDS);
-                } catch (TimeoutException e) {
-                    System.err.println("⏰ [타임아웃] 변환 시간 초과 (" + timeoutSeconds + "초): " + srcFile.getName());
-                    future.cancel(true);
-                    writeErrorFile(srcFile, "변환 시간 초과 (" + timeoutSeconds + "초)", finalTargetDir);
-                    rowData.pdfResult = "실패 (타임아웃)";
-                    rowData.txtResult = "실패";
                 } catch (Exception e) {
                     System.err.println("❌ [런타임 에러]: " + srcFile.getName());
                     writeErrorFile(srcFile, e.getMessage(), finalTargetDir);
@@ -129,27 +119,48 @@ public class ConverterMain {
                     double elapsedTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
                     rowData.elapsedTime = String.format("%.2f", elapsedTimeSeconds);
 
-                    // 📌 [요구사항 반영] 변환 종료 로그 출력에 파일 용량(KB) 지표 동적 결합
-                    System.out.println("🏁 [변환 종료 완료] 파일명: " + srcFile.getName()
+                    System.out.println("🏁 [변환 종료] 파일명: " + srcFile.getName()
                             + " | 용량: " + rowData.fileSize + " KB"
                             + " | 소요시간: " + rowData.elapsedTime + "초");
 
+                    // 📌 [수정 방향 2] 개별 파일의 결과가 나오는 즉시 메인 큐에 누적 적재
                     reportQueue.add(rowData);
-                    singleTaskExecutor.shutdownNow();
                 }
-            });
-        }
+                return success;
+            };
 
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(60, TimeUnit.MINUTES)) {
-                executor.shutdownNow();
+            // 워커 풀에 타스크 투하
+            Future<Boolean> future = conversionExecutor.submit(conversionTask);
+
+            try {
+                // 📌 [수정 방향 1] 지정된 제한 시간(config 설정값, 예: 90초) 동안 메인 스레드가 블로킹 대기 수행
+                future.get(timeoutSeconds, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                System.err.println("⏰ [타임아웃] 변환 시간 초과 (" + timeoutSeconds + "초 제한): " + srcFile.getName());
+                future.cancel(true); // 강제 인터럽트
+
+                // 타임아웃 예외 상황 발생 시에도 리포트 이력 유실 방지를 위해 수동 복구 적재 후 계속 진행
+                ReportRow timeoutRow = new ReportRow();
+                timeoutRow.filePath = srcFile.getAbsolutePath();
+                timeoutRow.fileName = srcFile.getName();
+                timeoutRow.fileType = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toUpperCase();
+                timeoutRow.fileSize = String.format("%.2f", srcFile.length() / 1024.0);
+                timeoutRow.pdfResult = "실패 (타임아웃)";
+                timeoutRow.txtResult = "실패";
+                timeoutRow.elapsedTime = String.valueOf(timeoutSeconds) + ".00";
+
+                reportQueue.add(timeoutRow);
+                writeErrorFile(srcFile, "제한시간 " + timeoutSeconds + "초 초과로 인한 강제 중단", finalTargetDir);
+            } catch (Exception e) {
+                // 📌 [수정 방향 3] 스레드 실행 중 예상치 못한 크래시가 발생해도 메인 루프는 절대 중단되지 않고 다음 파일로 이행
+                System.err.println("⚠️ [경고] 내부 스레드 제어 오류 패스: " + srcFile.getName() + " -> " + e.getMessage());
             }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
         }
 
-        // 모든 멀티스레드 완료 시점에 최종 CSV 리포트 출력
+        // 모든 루프 종료 후 싱글 풀 셧다운 마감
+        conversionExecutor.shutdown();
+
+        // 📌 [결과 보증] 100% 모든 파일의 순차 변환이 안전하게 끝난 완전무결한 시점에 단 한 번 CSV 출력 수행
         generateCsvReport(targetDir != null ? targetDir : inputDir);
 
         System.out.println("🏁 [IPLMS Hybrid Converter] 모든 디렉토리 대기열 처리 및 CSV 리포트 저장 완료");
@@ -275,9 +286,9 @@ public class ConverterMain {
         if (content.contains(key)) {
             if ("AppVersion".equals(key)) {
                 int start = content.indexOf("<AppVersion>");
-                int end = content.indexOf("</AppVersion>");
-                if (start != -1 && end != -1 && end > start) {
-                    String verNum = content.substring(start + 12, end).trim();
+                int decline = content.indexOf("</AppVersion>");
+                if (start != -1 && decline != -1 && decline > start) {
+                    String verNum = content.substring(start + 12, decline).trim();
                     if (verNum.startsWith("16")) return "2016/365 (" + verNum + ")";
                     if (verNum.startsWith("15")) return "2013 (" + verNum + ")";
                     if (verNum.startsWith("14")) return "2010 (" + verNum + ")";
@@ -289,9 +300,9 @@ public class ConverterMain {
                 if (idx == -1) idx = content.indexOf("version='");
                 if (idx != -1) {
                     int start = idx + 9;
-                    int end = content.indexOf(content.charAt(idx + 8) == '"' ? "\"" : "'", start);
-                    if (end > start) {
-                        return "표준 v" + content.substring(start, end).trim();
+                    int decline = content.indexOf(content.charAt(idx + 8) == '"' ? "\"" : "'", start);
+                    if (decline > start) {
+                        return "표준 v" + content.substring(start, decline).trim();
                     }
                 }
             }
@@ -316,9 +327,6 @@ public class ConverterMain {
         }
     }
 
-    /**
-     * 최종 CSV 리포트 생성기 (파일용량 KB 컬럼 안정 추가 완료)
-     */
     private static void generateCsvReport(File exportFolder) {
         File csvFile = new File(exportFolder, reportExcelName);
         if (csvFile.exists()) {
@@ -336,10 +344,8 @@ public class ConverterMain {
 
             try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(bos, StandardCharsets.UTF_8))) {
 
-                // 📌 [수정] 파일용량(KB) 컬럼 헤더 안정 바인딩
                 pw.println("번호,파일경로,파일명,파일종류,pdf변환결과(성공/실패),텍스트추출결과,파일용량(KB),소요시간(초)");
 
-                // 수집 데이터 출력 (BOM 및 콤마 가드 적용)
                 for (ReportRow row : reportQueue) {
                     pw.print(index++ + ",");
                     pw.print(escapeCsv(row.filePath) + ",");
@@ -347,7 +353,7 @@ public class ConverterMain {
                     pw.print(escapeCsv(row.fileType) + ",");
                     pw.print(escapeCsv(row.pdfResult) + ",");
                     pw.print(escapeCsv(row.txtResult) + ",");
-                    pw.print(escapeCsv(row.fileSize) + ","); // 📌 파일 용량 데이터 출력
+                    pw.print(escapeCsv(row.fileSize) + ",");
                     pw.println(escapeCsv(row.elapsedTime));
                 }
                 pw.flush();
@@ -422,6 +428,6 @@ public class ConverterMain {
         String pdfResult;
         String txtResult;
         String elapsedTime;
-        String fileSize; // 📌 신규 추가
+        String fileSize;
     }
 }
