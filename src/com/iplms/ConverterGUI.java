@@ -1,6 +1,7 @@
 package com.iplms;
 
 import javax.swing.*;
+import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -15,84 +16,109 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class ConverterGUI extends JFrame {
 
-    private JTextArea consoleOutputArea;
+    private JTextPane consoleOutputArea; // Changed from JTextArea to JTextPane
+    private StyledDocument doc; // To manage styles in JTextPane
     private JButton runButton;
     private JButton stopButton;
-    private JButton clearLogButton; // New button for clearing logs
+    private JButton clearLogButton;
 
     private ScheduledExecutorService scheduler;
+
+    // Define styles for different log types
+    private SimpleAttributeSet defaultStyle;
+    private SimpleAttributeSet greenStyle;
+    private SimpleAttributeSet redStyle;
+    private SimpleAttributeSet orangeStyle;
+    private SimpleAttributeSet blueStyle;
+    private SimpleAttributeSet purpleStyle;
+    private SimpleAttributeSet grayStyle;
 
     public ConverterGUI() {
         setTitle("IPLMS Hybrid Converter");
         setSize(800, 600);
-        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE); // Change to DO_NOTHING_ON_CLOSE
-        setLocationRelativeTo(null); // Center the window
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        setLocationRelativeTo(null);
 
-        // Add WindowListener to handle closing event
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosing(java.awt.event.WindowEvent e) {
-                stopService(); // Stop the service and HTTP server
-                System.exit(0); // Terminate the application
+                stopService();
+                System.exit(0);
             }
         });
 
+        initStyles(); // Initialize text styles
         initComponents();
         redirectSystemOutput();
 
-        // Moved initial setup here to run once when GUI starts
         System.out.println(">> [System 환경 정보] 현재 실행 경로 (User Dir): " + System.getProperty("user.dir"));
-        ConverterMain.loadProperties(); // Load properties once at startup
+        ConverterMain.loadProperties();
         System.out.println(">> [IPLMS Hybrid Converter] GUI 애플리케이션 시작.");
     }
 
+    private void initStyles() {
+        defaultStyle = new SimpleAttributeSet();
+        StyleConstants.setForeground(defaultStyle, Color.BLACK);
+
+        greenStyle = new SimpleAttributeSet();
+        StyleConstants.setForeground(greenStyle, new Color(0, 128, 0)); // Dark Green
+        StyleConstants.setBold(greenStyle, true);
+
+        redStyle = new SimpleAttributeSet();
+        StyleConstants.setForeground(redStyle, Color.RED);
+        StyleConstants.setBold(redStyle, true);
+
+        orangeStyle = new SimpleAttributeSet();
+        StyleConstants.setForeground(orangeStyle, Color.ORANGE.darker()); // Darker Orange
+        StyleConstants.setBold(orangeStyle, true);
+
+        blueStyle = new SimpleAttributeSet();
+        StyleConstants.setForeground(blueStyle, Color.BLUE);
+        StyleConstants.setBold(blueStyle, true);
+
+        purpleStyle = new SimpleAttributeSet();
+        StyleConstants.setForeground(purpleStyle, new Color(128, 0, 128)); // Purple
+        StyleConstants.setBold(purpleStyle, true);
+
+        grayStyle = new SimpleAttributeSet();
+        StyleConstants.setForeground(grayStyle, Color.GRAY);
+        StyleConstants.setBold(grayStyle, true);
+    }
+
     private void initComponents() {
-        // Console Output Area
-        consoleOutputArea = new JTextArea();
+        consoleOutputArea = new JTextPane(); // Use JTextPane
         consoleOutputArea.setEditable(false);
+        doc = consoleOutputArea.getStyledDocument(); // Get the StyledDocument
         JScrollPane scrollPane = new JScrollPane(consoleOutputArea);
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
 
-        // Buttons Panel
         JPanel buttonPanel = new JPanel();
         runButton = new JButton("실행");
         stopButton = new JButton("종료");
-        clearLogButton = new JButton("로그 지우기"); // Initialize the new button
+        clearLogButton = new JButton("로그 지우기");
 
         buttonPanel.add(runButton);
         buttonPanel.add(stopButton);
-        buttonPanel.add(clearLogButton); // Add the new button to the panel
+        buttonPanel.add(clearLogButton);
 
-        // Add components to JFrame
         add(buttonPanel, BorderLayout.NORTH);
         add(scrollPane, BorderLayout.CENTER);
 
-        // Action Listeners
-        runButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                startService();
+        runButton.addActionListener(e -> startService());
+        stopButton.addActionListener(e -> stopService());
+        clearLogButton.addActionListener(e -> {
+            try {
+                doc.remove(0, doc.getLength()); // Clear the JTextPane
+            } catch (BadLocationException ex) {
+                System.err.println("ERROR: Failed to clear log: " + ex.getMessage());
             }
         });
 
-        stopButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                stopService();
-            }
-        });
-
-        clearLogButton.addActionListener(new ActionListener() { // Add action listener for clear log button
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                consoleOutputArea.setText(""); // Clear the text area
-            }
-        });
-
-        // Initial button state
         stopButton.setEnabled(false);
     }
 
@@ -105,26 +131,65 @@ public class ConverterGUI extends JFrame {
             System.err.println("ERROR: Failed to set PrintStream encoding: " + e.getMessage());
         }
 
-
         try {
             PipedInputStream pis = new PipedInputStream(pos);
             new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(pis, StandardCharsets.UTF_8))) {
                     String line;
+                    Pattern pattern = Pattern.compile("(\\[[^\\]]+\\])"); // Regex to find [TAG]
                     while ((line = reader.readLine()) != null) {
                         final String finalLine = line;
                         SwingUtilities.invokeLater(() -> {
-                            consoleOutputArea.append(finalLine + "\n");
-                            consoleOutputArea.setCaretPosition(consoleOutputArea.getDocument().getLength());
+                            try {
+                                Matcher matcher = pattern.matcher(finalLine);
+                                int lastIndex = 0;
+                                while (matcher.find()) {
+                                    // Append text before the tag
+                                    if (lastIndex < matcher.start()) {
+                                        doc.insertString(doc.getLength(), finalLine.substring(lastIndex, matcher.start()), defaultStyle);
+                                    }
+
+                                    // Append the tag with specific style
+                                    String tag = matcher.group(1);
+                                    doc.insertString(doc.getLength(), tag, getTagStyle(tag));
+                                    lastIndex = matcher.end();
+                                }
+                                // Append any remaining text
+                                if (lastIndex < finalLine.length()) {
+                                    doc.insertString(doc.getLength(), finalLine.substring(lastIndex, finalLine.length()), defaultStyle);
+                                }
+                                doc.insertString(doc.getLength(), "\n", defaultStyle); // Add newline
+
+                                consoleOutputArea.setCaretPosition(doc.getLength()); // Scroll to bottom
+                            } catch (BadLocationException e) {
+                                System.err.println("ERROR: Document insert error: " + e.getMessage());
+                            }
                         });
                     }
                 } catch (IOException e) {
-                    // This error will be printed to the redirected System.err
                     System.err.println("ERROR: Console redirection thread error: " + e.getMessage());
                 }
             }).start();
         } catch (IOException e) {
             System.err.println("ERROR: Failed to redirect console output: " + e.getMessage());
+        }
+    }
+
+    private SimpleAttributeSet getTagStyle(String tag) {
+        String content = tag.substring(1, tag.length() - 1); // Remove brackets
+
+        if (content.contains("성공") || content.contains("텍스트추출완료") || content.contains("검증 완료")) {
+            return greenStyle;
+        } else if (content.contains("오류") || content.contains("실패") || content.contains("ERROR") || content.contains("FATAL ERROR")) {
+            return redStyle;
+        } else if (content.contains("경고") || content.contains("WARNING") || content.contains("덮어쓰기")) {
+            return orangeStyle;
+        } else if (content.contains("System 환경 정보") || content.contains("설정 정보") || content.contains("HttpServer") || content.contains("API 요청")) {
+            return blueStyle;
+        } else if (content.contains("IPLMS Hybrid Converter") || content.contains("가동 개시") || content.contains("탐색 완료")) {
+            return purpleStyle;
+        } else {
+            return grayStyle;
         }
     }
 
