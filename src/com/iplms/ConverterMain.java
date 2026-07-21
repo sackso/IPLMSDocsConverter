@@ -7,15 +7,23 @@ import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
+import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.*;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpExchange;
 
 public class ConverterMain {
 
@@ -25,6 +33,9 @@ public class ConverterMain {
     private static int timeoutSeconds;
     private static String reportExcelName;
     private static int daemonIntervalMinutes;
+    private static int serverPort;
+    private static HttpServer httpServer;
+    private static final ReentrantLock conversionLock = new ReentrantLock();
 
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
     private static final long MEMORY_LIMIT_BYTES = 2L * 1024 * 1024 * 1024; // 2GB
@@ -107,6 +118,7 @@ public class ConverterMain {
 
                     long startTime = System.nanoTime();
 
+                    conversionLock.lock(); // Acquire lock before conversion
                     try {
                         boolean isConverted = convertToPdf(srcFile, destPdf, fileVersion);
                         if (isConverted && destPdf.exists()) {
@@ -124,16 +136,17 @@ public class ConverterMain {
                         rowData.pdfResult = "실패 (에러)";
                         rowData.txtResult = "실패";
                     } finally {
-                        long endTime = System.nanoTime();
-                        double elapsedTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
-                        rowData.elapsedTime = String.format("%.2f", elapsedTimeSeconds);
-
-                        System.out.println(">> [변환 종료] 파일명: " + srcFile.getName()
-                                + " | 용량: " + rowData.fileSize + " KB"
-                                + " | 소요시간: " + rowData.elapsedTime + "초");
-
-                        reportQueue.add(rowData);
+                        conversionLock.unlock(); // Release lock
                     }
+                    long endTime = System.nanoTime();
+                    double elapsedTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
+                    rowData.elapsedTime = String.format("%.2f", elapsedTimeSeconds);
+
+                    System.out.println(">> [변환 종료] 파일명: " + srcFile.getName()
+                            + " | 용량: " + rowData.fileSize + " KB"
+                            + " | 소요시간: " + rowData.elapsedTime + "초");
+
+                    reportQueue.add(rowData);
                     return true;
                 };
 
@@ -451,10 +464,193 @@ public class ConverterMain {
         timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "90"));
         reportExcelName = prop.getProperty("converter.report.excel.name", "conversion_report.csv");
         daemonIntervalMinutes = Integer.parseInt(prop.getProperty("daemon.interval.minutes", "10"));
+        serverPort = Integer.parseInt(prop.getProperty("converter.server.port", "8080")); // Load server port
     }
 
     public static int getDaemonIntervalMinutes() { // Added getter for GUI to retrieve interval
         return daemonIntervalMinutes;
+    }
+
+    // Add startHttpServer method
+    public static void startHttpServer() {
+        if (httpServer != null) {
+            System.out.println(">> [HttpServer] 서버가 이미 실행 중입니다.");
+            return;
+        }
+        try {
+            httpServer = HttpServer.create(new InetSocketAddress(serverPort), 0);
+            httpServer.createContext("/api/convert", new ConvertHandler());
+            httpServer.setExecutor(Executors.newCachedThreadPool()); // Use a cached thread pool
+            httpServer.start();
+            System.out.println(">> [HttpServer] 내장 웹 서버가 포트 " + serverPort + "에서 실행 중입니다.");
+        } catch (Exception e) {
+            System.err.println("ERROR: [HttpServer] 서버 시작 실패: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    // Add stopHttpServer method
+    public static void stopHttpServer() {
+        if (httpServer != null) {
+            System.out.println(">> [HttpServer] 서버 종료 중...");
+            httpServer.stop(2); // Stop with a 2-second delay
+            httpServer = null;
+            System.out.println(">> [HttpServer] 서버가 성공적으로 종료되었습니다.");
+        }
+    }
+
+    // Add ConvertHandler inner class
+    private static class ConvertHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*"); // CORS
+            exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
+
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
+                exchange.sendResponseHeaders(204, -1); // No content for OPTIONS
+                return;
+            }
+
+            String filePath = null;
+
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                String query = exchange.getRequestURI().getRawQuery();
+                Map<String, String> params = parseQueryParams(query);
+                filePath = params.get("filePath");
+            } else if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+                InputStreamReader isr = new InputStreamReader(exchange.getRequestBody(), StandardCharsets.UTF_8);
+                BufferedReader br = new BufferedReader(isr);
+                StringBuilder body = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) {
+                    body.append(line);
+                }
+                
+                if (contentType != null && contentType.contains("application/json")) {
+                    filePath = parseJsonFilePath(body.toString());
+                } else { // Assume form-urlencoded if not JSON
+                    Map<String, String> params = parseQueryParams(body.toString());
+                    filePath = params.get("filePath");
+                }
+            } else {
+                sendResponse(exchange, 405, "{\"status\":\"error\", \"message\":\"Method Not Allowed. Use GET or POST.\"}");
+                return;
+            }
+
+            if (filePath == null || filePath.trim().isEmpty()) {
+                sendResponse(exchange, 400, "{\"status\":\"error\", \"message\":\"Missing 'filePath' parameter.\"}");
+                return;
+            }
+
+            File srcFile = new File(filePath.trim());
+            if (!srcFile.exists() || !srcFile.isFile()) {
+                sendResponse(exchange, 404, "{\"status\":\"error\", \"message\":\"File not found or is not a valid file -> " + srcFile.getAbsolutePath() + "\"}");
+                return;
+            }
+
+            String name = srcFile.getName().toLowerCase();
+            if (!(name.endsWith(".docx") || name.endsWith(".doc") ||
+                  name.endsWith(".xlsx") || name.endsWith(".xls") ||
+                  name.endsWith(".pptx") || name.endsWith(".ppt") ||
+                  name.endsWith(".hwpx") || name.endsWith(".hwp"))) {
+                sendResponse(exchange, 400, "{\"status\":\"error\", \"message\":\"Unsupported file format. Supported: docx, doc, xlsx, xls, pptx, ppt, hwpx, hwp\"}");
+                return;
+            }
+
+            System.out.println(">> [API 요청] 실시간 변환 요청 접수: " + srcFile.getAbsolutePath());
+
+            conversionLock.lock(); // Acquire lock for API conversion
+            try {
+                String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
+                File parentDir = srcFile.getParentFile();
+                File destPdf = new File(parentDir, baseName + ".pdf");
+                File destTxt = new File(parentDir, baseName + ".txt");
+
+                if (destPdf.exists()) {
+                    destPdf.delete();
+                }
+                if (destTxt.exists()) {
+                    destTxt.delete();
+                }
+
+                String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
+                String fileVersion = detectFileVersion(srcFile, ext);
+
+                long startTime = System.nanoTime();
+                boolean isConverted = convertToPdf(srcFile, destPdf, fileVersion);
+                long endTime = System.nanoTime();
+                double elapsedTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
+
+                if (isConverted && destPdf.exists()) {
+                    boolean isTxtExtracted = extractTextFromPdf(destPdf, destTxt);
+                    
+                    String jsonResponse = String.format(
+                        "{\"status\":\"success\", \"pdfPath\":\"%s\", \"txtPath\":\"%s\", \"txtExtracted\":%b, \"elapsedTime\":\"%.2f초\"}",
+                        escapeJson(destPdf.getAbsolutePath()),
+                        escapeJson(destTxt.getAbsolutePath()),
+                        isTxtExtracted,
+                        elapsedTimeSeconds
+                    );
+                    sendResponse(exchange, 200, jsonResponse);
+                } else {
+                    sendResponse(exchange, 500, "{\"status\":\"error\", \"message\":\"LibreOffice conversion failed.\"}");
+                }
+            } catch (Exception e) {
+                System.err.println("ERROR: [API 변환 에러] " + srcFile.getName() + " -> " + e.getMessage());
+                String jsonResponse = String.format("{\"status\":\"error\", \"message\":\"%s\"}", escapeJson(e.getMessage()));
+                sendResponse(exchange, 500, jsonResponse);
+            } finally {
+                conversionLock.unlock(); // Release lock
+            }
+        }
+
+        private Map<String, String> parseQueryParams(String query) {
+            Map<String, String> result = new HashMap<>();
+            if (query == null || query.isEmpty()) return result;
+            String[] pairs = query.split("&");
+            for (String pair : pairs) {
+                int idx = pair.indexOf("=");
+                try {
+                    String key = idx > 0 ? URLDecoder.decode(pair.substring(0, idx), StandardCharsets.UTF_8.name()) : pair;
+                    String value = idx > 0 && pair.length() > idx + 1 ? URLDecoder.decode(pair.substring(idx + 1), StandardCharsets.UTF_8.name()) : "";
+                    result.put(key, value);
+                } catch (Exception e) {
+                    // ignore
+                }
+            }
+            return result;
+        }
+
+        private String parseJsonFilePath(String json) {
+            // Simple JSON parsing for filePath. Assumes "filePath": "value"
+            if (json == null || json.isEmpty()) return null;
+            int keyIdx = json.indexOf("\"filePath\"");
+            if (keyIdx == -1) return null;
+            int colonIdx = json.indexOf(":", keyIdx);
+            if (colonIdx == -1) return null;
+            int startQuote = json.indexOf("\"", colonIdx);
+            if (startQuote == -1) return null;
+            int endQuote = json.indexOf("\"", startQuote + 1);
+            if (endQuote == -1) return null;
+            String escapedPath = json.substring(startQuote + 1, endQuote);
+            return escapedPath.replace("\\\\", "\\").replace("\\\"", "\""); // Unescape JSON string
+        }
+
+        private void sendResponse(HttpExchange exchange, int statusCode, String responseText) throws IOException {
+            byte[] bytes = responseText.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(statusCode, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+        }
+
+        private String escapeJson(String value) {
+            if (value == null) return "";
+            return value.replace("\\", "\\\\").replace("\"", "\\\"");
+        }
     }
 
     private static class ReportRow {

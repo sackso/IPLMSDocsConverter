@@ -28,8 +28,17 @@ public class ConverterGUI extends JFrame {
     public ConverterGUI() {
         setTitle("IPLMS Hybrid Converter");
         setSize(800, 600);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE); // Change to DO_NOTHING_ON_CLOSE
         setLocationRelativeTo(null); // Center the window
+
+        // Add WindowListener to handle closing event
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                stopService(); // Stop the service and HTTP server
+                System.exit(0); // Terminate the application
+            }
+        });
 
         initComponents();
         redirectSystemOutput();
@@ -134,6 +143,9 @@ public class ConverterGUI extends JFrame {
         System.out.println(">> [IPLMS Hybrid Converter] 데몬 모드로 시작합니다. 실행 주기: " + daemonIntervalMinutes + "분");
 
         scheduler.scheduleAtFixedRate(ConverterMain::runConversionCycle, 0, daemonIntervalMinutes, TimeUnit.MINUTES);
+        
+        // 내장 웹 서버 실행
+        ConverterMain.startHttpServer();
     }
 
     private void stopService() {
@@ -150,6 +162,10 @@ public class ConverterGUI extends JFrame {
                 System.err.println("ERROR: 서비스 종료 중 인터럽트 발생, 강제 종료되었습니다.");
                 Thread.currentThread().interrupt();
             }
+            
+            // 내장 웹 서버 종료
+            ConverterMain.stopHttpServer();
+            
             System.out.println(">> [IPLMS Hybrid Converter] 서비스가 종료되었습니다.");
         } else {
             System.out.println("서비스가 실행 중이 아닙니다.");
