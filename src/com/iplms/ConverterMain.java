@@ -464,7 +464,7 @@ public class ConverterMain {
         timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "90"));
         reportExcelName = prop.getProperty("converter.report.excel.name", "conversion_report.csv");
         daemonIntervalMinutes = Integer.parseInt(prop.getProperty("daemon.interval.minutes", "10"));
-        serverPort = Integer.parseInt(prop.getProperty("converter.server.port", "8080")); // Load server port
+        serverPort = Integer.parseInt(prop.getProperty("converter.server.port", "9119")); // Load server port
     }
 
     public static int getDaemonIntervalMinutes() { // Added getter for GUI to retrieve interval
