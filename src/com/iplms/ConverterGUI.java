@@ -4,10 +4,14 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
-import java.nio.charset.StandardCharsets; // Import StandardCharsets
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -20,7 +24,7 @@ public class ConverterGUI extends JFrame {
 
     private ScheduledExecutorService scheduler;
 
-    public ConverterGUI() throws UnsupportedEncodingException {
+    public ConverterGUI() { // Removed UnsupportedEncodingException from constructor signature
         setTitle("IPLMS Hybrid Converter");
         setSize(800, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -73,28 +77,36 @@ public class ConverterGUI extends JFrame {
         stopButton.setEnabled(false);
     }
 
-    private void redirectSystemOutput() throws UnsupportedEncodingException {
-        OutputStream out = new OutputStream() {
-            @Override
-            public void write(int b) {
-                SwingUtilities.invokeLater(() -> {
-                    consoleOutputArea.append(String.valueOf((char) b));
-                    consoleOutputArea.setCaretPosition(consoleOutputArea.getDocument().getLength());
-                });
-            }
+    private void redirectSystemOutput() { // Removed UnsupportedEncodingException from method signature
+        PipedOutputStream pos = new PipedOutputStream();
+        try {
+            System.setOut(new PrintStream(pos, true, StandardCharsets.UTF_8.toString()));
+            System.setErr(new PrintStream(pos, true, StandardCharsets.UTF_8.toString()));
+        } catch (IOException e) { // Changed to IOException as PrintStream constructor can throw it
+            System.err.println("ERROR: Failed to set PrintStream encoding: " + e.getMessage());
+        }
 
-            @Override
-            public void write(byte[] b, int off, int len) {
-                SwingUtilities.invokeLater(() -> {
-                    // Use UTF-8 for correct character display
-                    consoleOutputArea.append(new String(b, off, len, StandardCharsets.UTF_8));
-                    consoleOutputArea.setCaretPosition(consoleOutputArea.getDocument().getLength());
-                });
-            }
-        };
 
-        System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8.toString())); // Specify UTF-8 for PrintStream
-        System.setErr(new PrintStream(out, true, StandardCharsets.UTF_8.toString())); // Specify UTF-8 for PrintStream
+        try {
+            PipedInputStream pis = new PipedInputStream(pos);
+            new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(pis, StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        final String finalLine = line;
+                        SwingUtilities.invokeLater(() -> {
+                            consoleOutputArea.append(finalLine + "\n");
+                            consoleOutputArea.setCaretPosition(consoleOutputArea.getDocument().getLength());
+                        });
+                    }
+                } catch (IOException e) {
+                    // This error will be printed to the redirected System.err
+                    System.err.println("ERROR: Console redirection thread error: " + e.getMessage());
+                }
+            }).start();
+        } catch (IOException e) {
+            System.err.println("ERROR: Failed to redirect console output: " + e.getMessage());
+        }
     }
 
     private void startService() {
@@ -140,11 +152,8 @@ public class ConverterGUI extends JFrame {
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            try {
-                new ConverterGUI().setVisible(true);
-            } catch (UnsupportedEncodingException e) {
-                throw new RuntimeException(e);
-            }
+            // Removed try-catch for UnsupportedEncodingException as it's no longer thrown
+            new ConverterGUI().setVisible(true);
         });
     }
 }
