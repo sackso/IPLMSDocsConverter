@@ -27,10 +27,10 @@
 
 1.  **GUI (ConverterGUI)**:
     *   `JFrame` 기반의 메인 윈도우 (800x600).
-    *   `JTextArea` (`JScrollPane` 포함)를 통해 `System.out` 및 `System.err`의 출력을 실시간으로 표시합니다.
+    *   `JTextPane` (`JScrollPane` 포함) 및 `StyledDocument`를 통해 콘솔 메시지를 수신하며, 대괄호 태그별로 색상을 다르게 파싱하여 출력합니다.
     *   "실행", "종료", "로그 지우기" 버튼을 포함합니다.
     *   애플리케이션의 시작점(Entry Point) 역할을 합니다.
-2.  **콘솔 출력 리다이렉션**: `PipedOutputStream`과 `PipedInputStream`을 사용하여 `System.out` 및 `System.err`의 출력을 캡처하고, 별도의 스레드에서 라인 단위로 읽어 `JTextArea`에 UTF-8 인코딩으로 안전하게 추가합니다.
+2.  **콘솔 출력 리다이렉션**: `PipedOutputStream`과 `PipedInputStream`을 사용하여 `System.out` 및 `System.err`의 출력을 캡처하고, 별도의 스레드에서 라인 단위로 읽어 정규식 파싱을 통해 `JTextPane`에 안전하게 추가합니다.
 3.  **메인 스케줄러 (Main Scheduler)**: `ScheduledExecutorService`를 사용하여 `ConverterMain.runConversionCycle()`을 주기적으로 호출합니다. 이 스케줄러는 GUI의 "실행" 및 "종료" 버튼에 의해 제어됩니다.
 4.  **변환 주기 실행기 (Conversion Cycle Runner)**: `ConverterMain.runConversionCycle()` 메소드
     *   **타임스탬프 생성**: `yyyyMMddHHmm` 형식의 타임스탬프를 생성하여 해당 주기의 고유 ID로 사용합니다.
@@ -106,11 +106,11 @@
 
 - **`ConverterGUI` 클래스 (신규)**:
     - `JFrame`을 상속받아 GUI를 구성합니다.
-    - `JTextArea consoleOutputArea`: 콘솔 출력을 표시하는 영역.
+    - `JTextPane consoleOutputArea`: 콘솔 출력을 표시하는 영역으로, 대괄호 태그 영역을 감지하여 알맞은 색상으로 렌더링하는 다중 스타일 문서 컴포넌트입니다.
     - `JButton runButton`, `stopButton`, `clearLogButton`: 서비스 제어 및 로그 관리를 위한 버튼.
-    - `redirectSystemOutput()`: `PipedOutputStream` 및 `PipedInputStream`을 사용하여 `System.out`과 `System.err`를 `consoleOutputArea`로 리다이렉션합니다.
-    - `startService()`: "실행" 버튼 클릭 시 호출되며, `ScheduledExecutorService`를 초기화하고 `ConverterMain.runConversionCycle`을 주기적으로 스케줄링합니다.
-    - `stopService()`: "종료" 버튼 클릭 시 호출되며, `ScheduledExecutorService`를 안전하게 종료합니다.
+    - `redirectSystemOutput()`: `PipedOutputStream` 및 `PipedInputStream`을 사용하여 `System.out`과 `System.err`를 `consoleOutputArea`로 리다이렉션하며, 정규식 `(\[[^\]]+\])` 매칭을 이용해 상태 태그(성공, 오류, 경고 등)마다 적합한 색상(초록, 빨강, 주황 등)을 자동 적용하여 추가합니다.
+    - `startService()`: "실행" 버튼 클릭 시 호출되며, `ScheduledExecutorService` 및 내장 웹 서버를 구동합니다.
+    - `stopService()`: "종료" 버튼 클릭 시 호출되며, 스케줄러를 정지하고 웹 서버를 안전하게 해제합니다.
 - **`ConverterMain` 클래스 변경**:
     - `main` 메소드 제거: `ConverterGUI`가 애플리케이션의 시작점이 됩니다.
     - `runConversionCycle()` 메소드 `public static`으로 변경: `ConverterGUI`에서 호출 가능하도록 합니다.
