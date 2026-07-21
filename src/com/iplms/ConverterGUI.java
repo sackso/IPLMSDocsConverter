@@ -21,10 +21,11 @@ public class ConverterGUI extends JFrame {
     private JTextArea consoleOutputArea;
     private JButton runButton;
     private JButton stopButton;
+    private JButton clearLogButton; // New button for clearing logs
 
     private ScheduledExecutorService scheduler;
 
-    public ConverterGUI() { // Removed UnsupportedEncodingException from constructor signature
+    public ConverterGUI() {
         setTitle("IPLMS Hybrid Converter");
         setSize(800, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -50,9 +51,11 @@ public class ConverterGUI extends JFrame {
         JPanel buttonPanel = new JPanel();
         runButton = new JButton("실행");
         stopButton = new JButton("종료");
+        clearLogButton = new JButton("로그 지우기"); // Initialize the new button
 
         buttonPanel.add(runButton);
         buttonPanel.add(stopButton);
+        buttonPanel.add(clearLogButton); // Add the new button to the panel
 
         // Add components to JFrame
         add(buttonPanel, BorderLayout.NORTH);
@@ -73,16 +76,23 @@ public class ConverterGUI extends JFrame {
             }
         });
 
+        clearLogButton.addActionListener(new ActionListener() { // Add action listener for clear log button
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                consoleOutputArea.setText(""); // Clear the text area
+            }
+        });
+
         // Initial button state
         stopButton.setEnabled(false);
     }
 
-    private void redirectSystemOutput() { // Removed UnsupportedEncodingException from method signature
+    private void redirectSystemOutput() {
         PipedOutputStream pos = new PipedOutputStream();
         try {
             System.setOut(new PrintStream(pos, true, StandardCharsets.UTF_8.toString()));
             System.setErr(new PrintStream(pos, true, StandardCharsets.UTF_8.toString()));
-        } catch (IOException e) { // Changed to IOException as PrintStream constructor can throw it
+        } catch (IOException e) {
             System.err.println("ERROR: Failed to set PrintStream encoding: " + e.getMessage());
         }
 
@@ -119,10 +129,8 @@ public class ConverterGUI extends JFrame {
         runButton.setEnabled(false);
         stopButton.setEnabled(true);
 
-        // Properties are now loaded in the constructor, no need to load again here.
-
         scheduler = Executors.newSingleThreadScheduledExecutor();
-        int daemonIntervalMinutes = ConverterMain.getDaemonIntervalMinutes(); // Get interval from ConverterMain
+        int daemonIntervalMinutes = ConverterMain.getDaemonIntervalMinutes();
         System.out.println(">> [IPLMS Hybrid Converter] 데몬 모드로 시작합니다. 실행 주기: " + daemonIntervalMinutes + "분");
 
         scheduler.scheduleAtFixedRate(ConverterMain::runConversionCycle, 0, daemonIntervalMinutes, TimeUnit.MINUTES);
@@ -152,7 +160,6 @@ public class ConverterGUI extends JFrame {
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            // Removed try-catch for UnsupportedEncodingException as it's no longer thrown
             new ConverterGUI().setVisible(true);
         });
     }
