@@ -5,6 +5,7 @@ import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
@@ -25,6 +26,7 @@ public class ConverterGUI extends JFrame {
     private StyledDocument doc; // To manage styles in JTextPane
     private JButton runButton;
     private JButton stopButton;
+    private JButton openOutputButton;
     private JButton clearLogButton;
 
     private ScheduledExecutorService scheduler;
@@ -100,10 +102,12 @@ public class ConverterGUI extends JFrame {
         JPanel buttonPanel = new JPanel();
         runButton = new JButton("실행");
         stopButton = new JButton("종료");
+        openOutputButton = new JButton("출력 폴더 열기");
         clearLogButton = new JButton("로그 지우기");
 
         buttonPanel.add(runButton);
         buttonPanel.add(stopButton);
+        buttonPanel.add(openOutputButton);
         buttonPanel.add(clearLogButton);
 
         add(buttonPanel, BorderLayout.NORTH);
@@ -111,6 +115,7 @@ public class ConverterGUI extends JFrame {
 
         runButton.addActionListener(e -> startService());
         stopButton.addActionListener(e -> stopService());
+        openOutputButton.addActionListener(e -> openOutputDirectory());
         clearLogButton.addActionListener(e -> {
             try {
                 doc.remove(0, doc.getLength()); // Clear the JTextPane
@@ -237,6 +242,39 @@ public class ConverterGUI extends JFrame {
         }
         runButton.setEnabled(true);
         stopButton.setEnabled(false);
+    }
+
+    private void openOutputDirectory() {
+        String outputDirStr = ConverterMain.getOutputDirSetting();
+        if (outputDirStr == null || outputDirStr.trim().isEmpty()) {
+            System.err.println("ERROR: 출력 폴더 설정이 비어 있습니다.");
+            return;
+        }
+
+        File dir = new File(outputDirStr.trim());
+        if (!dir.exists()) {
+            System.out.println(">> [알림] 출력 폴더가 존재하지 않아 생성을 시도합니다: " + dir.getAbsolutePath());
+            if (!dir.mkdirs()) {
+                System.err.println("ERROR: 출력 폴더 생성에 실패했습니다: " + dir.getAbsolutePath());
+                return;
+            }
+        }
+
+        System.out.println(">> [시스템] 출력 폴더를 탐색기에서 엽니다: " + dir.getAbsolutePath());
+        try {
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+                Desktop.getDesktop().open(dir);
+            } else {
+                new ProcessBuilder("explorer.exe", dir.getAbsolutePath()).start();
+            }
+        } catch (Exception ex) {
+            System.err.println("ERROR: 출력 폴더를 여는 중 오류 발생: " + ex.getMessage());
+            try {
+                new ProcessBuilder("explorer.exe", dir.getAbsolutePath()).start();
+            } catch (Exception ex2) {
+                System.err.println("ERROR: 탐색기 실행 대체 시도 실패: " + ex2.getMessage());
+            }
+        }
     }
 
     public static void main(String[] args) {

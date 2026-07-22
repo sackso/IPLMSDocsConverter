@@ -471,6 +471,13 @@ public class ConverterMain {
         return daemonIntervalMinutes;
     }
 
+    public static String getOutputDirSetting() {
+        if (outputDirSetting == null || outputDirSetting.trim().isEmpty()) {
+            return inputDirSetting != null ? inputDirSetting.trim() : "";
+        }
+        return outputDirSetting.trim();
+    }
+
     // Add startHttpServer method
     public static void startHttpServer() {
         if (httpServer != null) {
