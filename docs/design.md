@@ -99,11 +99,16 @@ converter.autocad.script.path=C:\\IPLMS\\scripts\\dwg2pdf.scr
 
 ### 6.2. 요청 및 응답 예제
 
+* **요청 파라미터(GET)**
+  
+  `http://[IP]:9119/api/convert?filePath=C:/IPLMS/91_input/sample.hwp`
+
 * **요청 파라미터 (POST JSON)**:
   
   ```json
   { "filePath": "C:\\IPLMS\\91_input\\sample.dwg" }
   ```
+
 * **성공 응답 (JSON)**:
   
   ```json
