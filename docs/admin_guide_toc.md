@@ -117,6 +117,8 @@
         *   `pdfPath`: 변환된 PDF 결과 파일 절대 경로
         *   `txtPath`: 추출된 TXT 결과 파일 절대 경로
         *   `txtExtracted`: 텍스트 추출 완료 플래그 (`true` / `false`)
+        *   `extractedTextContent`: 추출된 문서 텍스트 문자열
+        *   `elapsedTime`: 변환 소요 시간 (초)
 *   **[배치 이미지 안내]**: JSON 응답 구조 다이어그램 및 파라미터 설정표
 
 #### [Slide 11] REST API 구동 및 결과 확인 예제

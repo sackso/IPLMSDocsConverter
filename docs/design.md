@@ -9,7 +9,7 @@
   * **MS Office**: Word(.docx, .doc), Excel(.xlsx, .xls), PowerPoint(.pptx, .ppt)
   * **한컴오피스**: HWP(v5.0 이상), HWPX(표준 v1.0)
   * **AutoCAD**: **DWG **
-* **주요 기능**: GUI 기반 제어, 실시간 로그 출력, 멀티스레드 병렬 처리, 내장 HTTP REST API 지원.
+* **주요 기능**: GUI 기반 제어, 실시간 로그 출력, 단일 스레드 안전 순차 처리, 내장 HTTP REST API 지원.
 
 ---
 
@@ -22,9 +22,9 @@ graph TD
     A[프로그램 기동 및 GUI 실행] --> B{사용자 '실행' 버튼 클릭}
     B --> C[ScheduledExecutorService 스케줄러 가동]
     C --> D[입력 폴더 재귀 탐색 및 대상 문서 수집]
-    D --> E[Fixed 스레드풀 작업 분배]
+    D --> E[단일 스레드 작업 순차 분배]
 
-    subgraph "개별 Task 스레드 (병렬 구동)"
+    subgraph "개별 Task 스레드 (순차 구동)"
         F[기존 결과물 PDF/TXT 강제 삭제 - 무결성 가드] --> G[detectFileVersion 실행 - 헤더 분석]
         G --> H{확장자 판별}
 
@@ -112,6 +112,7 @@ converter.autocad.script.path=C:\\IPLMS\\scripts\\dwg2pdf.scr
     "pdfPath": "C:\\IPLMS\\92_output\\sample.pdf",
     "txtPath": "C:\\IPLMS\\92_output\\sample.txt",
     "txtExtracted": true,
+    "extractedTextContent": "추출된 샘플 문서 텍스트 내용...",
     "elapsedTime": "13.02초"
   }
   ```

@@ -661,12 +661,20 @@ public class ConverterMain {
 
                 if (isConverted && destPdf.exists()) {
                     boolean isTxtExtracted = extractTextFromPdf(destPdf, destTxt);
+                    String textContent = "";
+                    if (isTxtExtracted && destTxt.exists()) {
+                        try {
+                            textContent = new String(java.nio.file.Files.readAllBytes(destTxt.toPath()), StandardCharsets.UTF_8);
+                        } catch (Exception ignored) {
+                        }
+                    }
                     
                     String jsonResponse = String.format(
-                        "{\"status\":\"success\", \"pdfPath\":\"%s\", \"txtPath\":\"%s\", \"txtExtracted\":%b, \"elapsedTime\":\"%.2f초\"}",
+                        "{\"status\":\"success\", \"pdfPath\":\"%s\", \"txtPath\":\"%s\", \"txtExtracted\":%b, \"extractedTextContent\":\"%s\", \"elapsedTime\":\"%.2f초\"}",
                         escapeJson(destPdf.getAbsolutePath()),
                         escapeJson(destTxt.getAbsolutePath()),
                         isTxtExtracted,
+                        escapeJson(textContent),
                         elapsedTimeSeconds
                     );
                     sendResponse(exchange, 200, jsonResponse);
@@ -722,7 +730,11 @@ public class ConverterMain {
 
         private String escapeJson(String value) {
             if (value == null) return "";
-            return value.replace("\\", "\\\\").replace("\"", "\\\"");
+            return value.replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("\r", "\\r")
+                        .replace("\n", "\\n")
+                        .replace("\t", "\\t");
         }
     }
 
