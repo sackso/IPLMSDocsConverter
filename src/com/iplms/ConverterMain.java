@@ -28,6 +28,9 @@ import com.sun.net.httpserver.HttpExchange;
 public class ConverterMain {
 
     private static String libreOfficePath;
+    private static String autoCadPath;
+    private static String autoCadScriptPath;
+    private static int autoCadTimeoutSeconds;
     private static String inputDirSetting;
     private static String outputDirSetting;
     private static int timeoutSeconds;
@@ -118,7 +121,6 @@ public class ConverterMain {
 
                     long startTime = System.nanoTime();
 
-                    conversionLock.lock(); // Acquire lock before conversion
                     try {
                         boolean isConverted = convertToPdf(srcFile, destPdf, fileVersion);
                         if (isConverted && destPdf.exists()) {
@@ -135,8 +137,6 @@ public class ConverterMain {
                         if (errFile != null) resultFilePaths.add(errFile.getAbsolutePath());
                         rowData.pdfResult = "실패 (에러)";
                         rowData.txtResult = "실패";
-                    } finally {
-                        conversionLock.unlock(); // Release lock
                     }
                     long endTime = System.nanoTime();
                     double elapsedTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
@@ -241,7 +241,8 @@ public class ConverterMain {
                 if (name.endsWith(".docx") || name.endsWith(".doc") ||
                         name.endsWith(".xlsx") || name.endsWith(".xls") ||
                         name.endsWith(".pptx") || name.endsWith(".ppt") ||
-                        name.endsWith(".hwpx") || name.endsWith(".hwp")) {
+                        name.endsWith(".hwpx") || name.endsWith(".hwp") ||
+                        name.endsWith(".dwg")) {
                     resultList.add(file);
                 }
             }
@@ -252,6 +253,20 @@ public class ConverterMain {
         String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
         System.out.println(">> [변환 시작] 포맷: [" + ext.toUpperCase() + "] | 문서 버전: [" + fileVersion + "] | 파일명: " + srcFile.getName());
 
+        if ("dwg".equals(ext)) {
+            return runAutoCadConverter(srcFile, destPdf);
+        } else {
+            conversionLock.lock();
+            try {
+                return runLibreOfficeConverter(srcFile, destPdf);
+            } finally {
+                conversionLock.unlock();
+            }
+        }
+    }
+
+    private static boolean runLibreOfficeConverter(File srcFile, File destPdf) throws Exception {
+        String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
         File outputDir = destPdf.getParentFile();
         ProcessBuilder pb;
 
@@ -285,6 +300,56 @@ public class ConverterMain {
         if (exitCode == 0) {
             String defaultGeneratedName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.')) + ".pdf";
             File generatedPdf = new File(outputDir, defaultGeneratedName);
+
+            if (generatedPdf.exists()) {
+                if (!generatedPdf.getAbsolutePath().equals(destPdf.getAbsolutePath())) {
+                    if (destPdf.exists()) destPdf.delete();
+                    generatedPdf.renameTo(destPdf);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean runAutoCadConverter(File srcFile, File destPdf) throws Exception {
+        if (autoCadPath == null || autoCadPath.trim().isEmpty()) {
+            throw new FileNotFoundException("AutoCAD 실행 파일 경로(converter.autocad.path)가 설정되지 않았습니다.");
+        }
+        File autoCadExec = new File(autoCadPath.trim());
+        if (!autoCadExec.exists()) {
+            throw new FileNotFoundException("AutoCAD 실행 파일을 찾을 수 없습니다 -> " + autoCadPath);
+        }
+        if (autoCadScriptPath == null || autoCadScriptPath.trim().isEmpty()) {
+            throw new FileNotFoundException("AutoCAD 변환 스크립트 경로(converter.autocad.script.path)가 설정되지 않았습니다.");
+        }
+        File scriptFile = new File(autoCadScriptPath.trim());
+        if (!scriptFile.exists()) {
+            throw new FileNotFoundException("AutoCAD 변환 스크립트 파일을 찾을 수 없습니다 -> " + autoCadScriptPath);
+        }
+
+        File outputDir = destPdf.getParentFile();
+        ProcessBuilder pb = new ProcessBuilder(
+                autoCadPath.trim(),
+                "/i", srcFile.getAbsolutePath(),
+                "/s", scriptFile.getAbsolutePath(),
+                "/l", "en-US"
+        );
+        pb.directory(outputDir);
+
+        Process process = pb.start();
+        if (!process.waitFor(autoCadTimeoutSeconds, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new TimeoutException("AutoCAD AcCoreConsole 프로세스가 " + autoCadTimeoutSeconds + "초 내에 완료되지 않았습니다.");
+        }
+
+        int exitCode = process.exitValue();
+        if (exitCode == 0) {
+            String defaultGeneratedName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.')) + ".pdf";
+            File generatedPdf = new File(outputDir, defaultGeneratedName);
+            if (!generatedPdf.exists()) {
+                generatedPdf = new File(srcFile.getParentFile(), defaultGeneratedName);
+            }
 
             if (generatedPdf.exists()) {
                 if (!generatedPdf.getAbsolutePath().equals(destPdf.getAbsolutePath())) {
@@ -459,6 +524,9 @@ public class ConverterMain {
         }
 
         libreOfficePath = prop.getProperty("converter.libreoffice.path", "C:\\Program Files\\LibreOffice\\program\\soffice.exe");
+        autoCadPath = prop.getProperty("converter.autocad.path", "C:\\Program Files\\Autodesk\\AutoCAD 2024\\accoreconsole.exe");
+        autoCadScriptPath = prop.getProperty("converter.autocad.script.path", "C:\\IPLMS\\scripts\\dwg2pdf.scr");
+        autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "120"));
         inputDirSetting = prop.getProperty("converter.input.dir", "");
         outputDirSetting = prop.getProperty("converter.output.dir", "");
         timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "90"));
@@ -562,14 +630,14 @@ public class ConverterMain {
             if (!(name.endsWith(".docx") || name.endsWith(".doc") ||
                   name.endsWith(".xlsx") || name.endsWith(".xls") ||
                   name.endsWith(".pptx") || name.endsWith(".ppt") ||
-                  name.endsWith(".hwpx") || name.endsWith(".hwp"))) {
-                sendResponse(exchange, 400, "{\"status\":\"error\", \"message\":\"Unsupported file format. Supported: docx, doc, xlsx, xls, pptx, ppt, hwpx, hwp\"}");
+                  name.endsWith(".hwpx") || name.endsWith(".hwp") ||
+                  name.endsWith(".dwg"))) {
+                sendResponse(exchange, 400, "{\"status\":\"error\", \"message\":\"Unsupported file format. Supported: docx, doc, xlsx, xls, pptx, ppt, hwpx, hwp, dwg\"}");
                 return;
             }
 
             System.out.println(">> [API 요청] 실시간 변환 요청 접수: " + srcFile.getAbsolutePath());
 
-            conversionLock.lock(); // Acquire lock for API conversion
             try {
                 String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
                 File parentDir = srcFile.getParentFile();
@@ -603,14 +671,12 @@ public class ConverterMain {
                     );
                     sendResponse(exchange, 200, jsonResponse);
                 } else {
-                    sendResponse(exchange, 500, "{\"status\":\"error\", \"message\":\"LibreOffice conversion failed.\"}");
+                    sendResponse(exchange, 500, "{\"status\":\"error\", \"message\":\"Conversion failed.\"}");
                 }
             } catch (Exception e) {
                 System.err.println("ERROR: [API 변환 에러] " + srcFile.getName() + " -> " + e.getMessage());
                 String jsonResponse = String.format("{\"status\":\"error\", \"message\":\"%s\"}", escapeJson(e.getMessage()));
                 sendResponse(exchange, 500, jsonResponse);
-            } finally {
-                conversionLock.unlock(); // Release lock
             }
         }
 
