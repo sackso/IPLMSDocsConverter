@@ -1,0 +1,39 @@
+; 1. 상세 플롯 설정 모드 진입 (Detailed plot configuration? [Yes/No] <No>)
+-PLOT
+Yes
+; 2. 레이아웃 이름 지정 (Enter a layout name or [?])
+Model
+; 3. 출력 장치(PDF) 설정 (Enter an output device name)
+AutoCAD PDF (General Documentation).pc3
+; 4. 용지 크기 설정 (Enter paper size)
+ISO full bleed A3 (420.00 x 297.00 MM)
+; 5. 용지 단위 설정 (Enter paper units [Inches/Millimeters])
+Millimeters
+; 6. 도면 방향 설정 (Enter drawing orientation [Portrait/Landscape])
+Landscape
+; 7. 위아래 반전 여부 (Plot upside down? [Yes/No])
+No
+; 8. 플롯 영역 설정 (Enter plot area [Display/Extents/Limits/View/Window])
+Extents
+; 9. 플롯 축적 설정 (Enter plot scale [Fit] or unit=unit)
+Fit
+; 10. 플롯 오프셋 설정 (Enter plot offset (x,y) or [Center])
+Center
+; 11. 플롯 스타일 적용 여부 (Plot with plot styles? [Yes/No])
+Yes
+; 12. 플롯 스타일 테이블 이름 (Enter plot style table name)
+monochrome.ctb
+; 13. 선 가중치 플롯 여부 (Plot with lineweights? [Yes/No])
+Yes
+; 14. 쉐이드 플롯 설정 (Enter shade plot setting)
+As displayed
+; 15. 파일로 출력 여부 (Write the plot to a file? [Yes/No])
+Yes
+; 16. 저장 경로 및 파일명 (이 부분은 Java 소스에서 매개변수로 처리하거나 특정 경로를 지정)
+"C:/IPLMS/92_output/converted_drawing.pdf"
+; 17. 페이지 설정 저장 여부 (Save changes to page setup? [Yes/No])
+No
+; 18. 플롯 진행 (Proceed with plot? [Yes/No])
+Yes
+; 19. 콘솔 종료
+QUIT
