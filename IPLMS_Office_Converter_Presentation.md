@@ -107,7 +107,7 @@
         - `generateCsvReport()`: 변환 결과 CSV 리포트 생성                       |
         - `writeResultFileList()`: 생성된 모든 파일 경로 목록 `.txt` 생성        |
      b) **REST API 모드**:                                                       |
-        - 원본 파일과 동일 디렉토리에 PDF/TXT 저장                               |
+         - 설정된 Output 디렉토리(미지정 시 원본 디렉토리)에 PDF/TXT 저장                               |
         - JSON 응답 반환: `status`, `pdfPath`, `txtPath`, `txtExtracted`, `extractedTextContent`, `elapsedTime` |
                                                                                  |
   6. 종료 (GUI "종료" 버튼 클릭 시):                                             |

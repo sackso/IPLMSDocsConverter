@@ -640,9 +640,15 @@ public class ConverterMain {
 
             try {
                 String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
-                File parentDir = srcFile.getParentFile();
-                File destPdf = new File(parentDir, baseName + ".pdf");
-                File destTxt = new File(parentDir, baseName + ".txt");
+                String outputDirStr = getOutputDirSetting();
+                File targetDir = (outputDirStr != null && !outputDirStr.trim().isEmpty())
+                        ? new File(outputDirStr.trim())
+                        : srcFile.getParentFile();
+                if (!targetDir.exists()) {
+                    targetDir.mkdirs();
+                }
+                File destPdf = new File(targetDir, baseName + ".pdf");
+                File destTxt = new File(targetDir, baseName + ".txt");
 
                 if (destPdf.exists()) {
                     destPdf.delete();
