@@ -1,4 +1,4 @@
-# IPLMS Office Converter 관리자 가이드 목차 (PPT 스토리보드 구성안)
+# IPLMS DOC Converter 관리자 가이드 목차 (PPT 스토리보드 구성안)
 
 본 제안서는 향후 PPT 교안(이미지 캡처 추가형)으로 즉시 제작할 수 있도록 각 슬라이드(Slide) 단위의 목차와 배치 내용을 세부 정의한 스토리보드 구성안입니다.
 
@@ -18,7 +18,7 @@
 ### 📌 표지 / 목차
 
 #### [Slide 01] 타이틀 표지
-*   **슬라이드 제목**: IPLMS Office Converter 통합 관리자 가이드
+*   **슬라이드 제목**: IPLMS DOC Converter 통합 관리자 가이드
 *   **부제목**: 하이브리드 문서 변환 엔진 (Daemon & REST API) 운영 지침서
 *   **작성 대상**: 시스템 관리자 및 연계 모듈 개발자
 *   **[배치 이미지 안내]**: IPLMS Hybrid Converter GUI 실행 전체 샷

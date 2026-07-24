@@ -49,6 +49,60 @@
     *   GUI의 "실행" 및 "종료" 제어 이벤트와 생명주기가 동기화되어 가동 및 정지됩니다.
 7.  **동시성 제어 락 (ReentrantLock)**:
     *   단일 JVM 내에서 정기 배치 변환과 실시간 REST API 변환 요청이 동시에 발생해 발생하는 LibreOffice 경합 및 잠금 충돌을 예방하기 위해 `ReentrantLock` 상호 배제(Mutex) 메커니즘을 사용합니다.
+8.  **문서 변환 및 텍스트 추출 상세 흐름 (Diagram)**:
+    *   원본 문서(MS Office, 한컴오피스 HWP/HWPX)가 LibreOffice Engine을 통과하여 PDF 파일로 변환된 후, Apache PDFBox를 통해 텍스트로 추출되는 전체 흐름입니다.
+
+    ```mermaid
+    graph LR
+        %% 1단계: Source Documents (Input)
+        subgraph Source["1. Source Documents (Input)"]
+            direction TB
+            MS[MS Office 문서<br/>.docx / .doc<br/>.xlsx / .xls<br/>.pptx / .ppt]
+            HWP[한컴오피스 문서<br/>.hwp / .hwpx]
+        end
+
+        %% 2단계: LibreOffice Engine (Processing)
+        subgraph Engine["2. LibreOffice Engine (Processing)"]
+            direction TB
+            Cond{확장자 판별<br/>detectFileVersion}
+            
+            CmdMS["soffice --headless<br/>--convert-to pdf<br/>--outdir &lt;output_dir&gt; &lt;src_file&gt;"]
+            
+            CmdHWP["soffice --headless<br/>--infilter=Hwp2002_File<br/>--convert-to pdf:writer_pdf_Export<br/>--outdir &lt;output_dir&gt; &lt;src_file&gt;"]
+            
+            Cond -->|MS Office 계열| CmdMS
+            Cond -->|HWP / HWPX 계열| CmdHWP
+        end
+
+        %% 3단계: Target Output & Text Extraction
+        subgraph Dest["3. Target Output & Text Extraction"]
+            direction TB
+            PDF["변환 완료 PDF 파일<br/>(*.pdf)"]
+            
+            PDFBox["Apache PDFBox 라이브러리<br/>PDDocument.load(pdfFile)<br/>& PDFTextStripper"]
+            
+            TXT["추출 완료 텍스트 파일<br/>(*.txt, UTF-8)"]
+            
+            PDF --> PDFBox
+            PDFBox --> TXT
+        end
+
+        %% 흐름 연결
+        MS --> Cond
+        HWP --> Cond
+        
+        CmdMS --> PDF
+        CmdHWP --> PDF
+        
+        %% 스타일 지정
+        classDef source fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+        classDef engine fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px;
+        classDef dest fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+        
+        class MS,HWP source;
+        class Cond,CmdMS,CmdHWP engine;
+        class PDF,PDFBox,TXT dest;
+    ```
 
 ---
 
