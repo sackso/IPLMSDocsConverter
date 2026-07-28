@@ -33,6 +33,8 @@ public class ConverterMain {
     private static int autoCadTimeoutSeconds;
     private static String inputDirSetting;
     private static String outputDirSetting;
+    private static String logDirSetting; // Added for log directory
+    private static int guiLogMaxLength; // Added for GUI log max length
     private static int timeoutSeconds;
     private static String reportExcelName;
     private static int daemonIntervalMinutes;
@@ -75,6 +77,7 @@ public class ConverterMain {
             System.out.println(">> 탐색 대상 입력 폴더: " + inputDir.getAbsolutePath());
             System.out.println(">> 이번 주기 출력 폴더: " + timestampedOutputDir.getAbsolutePath());
             System.out.println(">> LibreOffice 경로: " + libreOfficePath);
+            System.out.println(">> logs 경로: " + logDirSetting);
 
             List<File> targetFiles = new ArrayList<>();
             scanDirectory(inputDir, targetFiles);
@@ -529,6 +532,8 @@ public class ConverterMain {
         autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "120"));
         inputDirSetting = prop.getProperty("converter.input.dir", "");
         outputDirSetting = prop.getProperty("converter.output.dir", "");
+        logDirSetting = prop.getProperty("converter.log.dir", "C:\\IPLMS\\95_logs"); // Load log directory
+        guiLogMaxLength = Integer.parseInt(prop.getProperty("converter.gui.log.max.length", "500000")); // Load GUI log max length
         timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "90"));
         reportExcelName = prop.getProperty("converter.report.excel.name", "conversion_report.csv");
         daemonIntervalMinutes = Integer.parseInt(prop.getProperty("daemon.interval.minutes", "10"));
@@ -545,6 +550,13 @@ public class ConverterMain {
         }
         return outputDirSetting.trim();
     }
+    public static String getLogDirSetting() {
+        if (logDirSetting == null || logDirSetting.trim().isEmpty()) {
+            return logDirSetting != null ? logDirSetting.trim() : "";
+        }
+        return logDirSetting.trim();
+    }
+
 
     // Add startHttpServer method
     public static void startHttpServer() {

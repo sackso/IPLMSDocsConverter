@@ -5,15 +5,10 @@ import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.io.File;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -21,6 +16,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class ConverterGUI extends JFrame {
+    private static final String LOG_DIR_NAME = "95_logs";
+    private static final int MAX_DOCUMENT_LENGTH = 500_000;
 
     private JTextPane consoleOutputArea; // Changed from JTextArea to JTextPane
     private StyledDocument doc; // To manage styles in JTextPane
@@ -30,6 +27,7 @@ public class ConverterGUI extends JFrame {
     private JButton clearLogButton;
 
     private ScheduledExecutorService scheduler;
+    private String currentLogDate;
 
     // Define styles for different log types
     private SimpleAttributeSet defaultStyle;
@@ -116,13 +114,7 @@ public class ConverterGUI extends JFrame {
         runButton.addActionListener(e -> startService());
         stopButton.addActionListener(e -> stopService());
         openOutputButton.addActionListener(e -> openOutputDirectory());
-        clearLogButton.addActionListener(e -> {
-            try {
-                doc.remove(0, doc.getLength()); // Clear the JTextPane
-            } catch (BadLocationException ex) {
-                System.err.println("ERROR: Failed to clear log: " + ex.getMessage());
-            }
-        });
+        clearLogButton.addActionListener(e -> clearConsoleDocument());
 
         stopButton.setEnabled(false);
     }
@@ -144,6 +136,9 @@ public class ConverterGUI extends JFrame {
                     Pattern pattern = Pattern.compile("(\\[[^\\]]+\\])"); // Regex to find [TAG]
                     while ((line = reader.readLine()) != null) {
                         final String finalLine = line;
+
+                        writeDailyLog(finalLine);
+
                         SwingUtilities.invokeLater(() -> {
                             try {
                                 Matcher matcher = pattern.matcher(finalLine);
@@ -178,6 +173,58 @@ public class ConverterGUI extends JFrame {
         } catch (IOException e) {
             System.err.println("ERROR: Failed to redirect console output: " + e.getMessage());
         }
+    }
+
+    private void writeDailyLog(String line) {
+        String logDate = new SimpleDateFormat("yyyyMMdd").format(new Date());
+        File logDir = new File( ConverterMain.getLogDirSetting());
+
+        if (!logDir.exists() && !logDir.mkdirs()) {
+            return;
+        }
+
+        File logFile = new File(logDir, logDate + ".log");
+
+        try (BufferedWriter writer = new BufferedWriter(
+                new OutputStreamWriter(new FileOutputStream(logFile, true), StandardCharsets.UTF_8))) {
+            writer.write(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+            writer.write(" ");
+            writer.write(line);
+            writer.newLine();
+        } catch (IOException ignored) {
+        }
+    }
+
+    private void rotateDailyLogIfNeeded() {
+        String today = new SimpleDateFormat("yyyyMMdd").format(new Date());
+
+        if (currentLogDate == null) {
+            currentLogDate = today;
+            return;
+        }
+
+        if (!currentLogDate.equals(today)) {
+            clearConsoleDocument();
+            currentLogDate = today;
+            System.gc();
+        }
+    }
+
+    private void clearConsoleDocument() {
+        try {
+            doc.remove(0, doc.getLength());
+        } catch (BadLocationException e) {
+            System.err.println("ERROR: Failed to clear log: " + e.getMessage());
+        }
+    }
+
+    private void trimConsoleDocumentIfNeeded() throws BadLocationException {
+        if (doc.getLength() <= MAX_DOCUMENT_LENGTH) {
+            return;
+        }
+
+        int removeLength = doc.getLength() - (MAX_DOCUMENT_LENGTH / 2);
+        doc.remove(0, removeLength);
     }
 
     private SimpleAttributeSet getTagStyle(String tag) {
@@ -276,6 +323,7 @@ public class ConverterGUI extends JFrame {
             }
         }
     }
+
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
