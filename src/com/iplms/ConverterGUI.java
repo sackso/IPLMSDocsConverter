@@ -118,7 +118,17 @@ public class ConverterGUI extends JFrame {
 
         stopButton.setEnabled(false);
     }
-
+    /**
+     * 표준 출력({@link System#out})과 표준 오류 출력({@link System#err})을 GUI 콘솔 영역으로 리다이렉트합니다.
+     *
+     * <p>{@link PipedOutputStream}과 {@link PipedInputStream}을 연결하여 콘솔 출력 내용을 별도 스레드에서
+     * 한 줄씩 읽어 들인 뒤, 일별 로그 파일에 기록하고 Swing 이벤트 디스패치 스레드에서 화면에 표시합니다.</p>
+     *
+     * <p>로그 메시지에 포함된 {@code [태그]} 형식의 문자열은 태그 내용에 따라 서로 다른 스타일을 적용하여
+     * {@link JTextPane}에 출력하며, 출력 후에는 자동으로 콘솔 하단으로 스크롤합니다.</p>
+     *
+     * <p>출력 스트림 설정, 콘솔 리다이렉션 또는 문서 삽입 중 오류가 발생하면 표준 오류 출력으로 오류 메시지를 기록합니다.</p>
+     */
     private void redirectSystemOutput() {
         PipedOutputStream pos = new PipedOutputStream();
         try {
@@ -141,6 +151,8 @@ public class ConverterGUI extends JFrame {
 
                         SwingUtilities.invokeLater(() -> {
                             try {
+                                rotateDailyLogIfNeeded();
+
                                 Matcher matcher = pattern.matcher(finalLine);
                                 int lastIndex = 0;
                                 while (matcher.find()) {
@@ -159,7 +171,7 @@ public class ConverterGUI extends JFrame {
                                     doc.insertString(doc.getLength(), finalLine.substring(lastIndex, finalLine.length()), defaultStyle);
                                 }
                                 doc.insertString(doc.getLength(), "\n", defaultStyle); // Add newline
-
+                                trimConsoleDocumentIfNeeded();
                                 consoleOutputArea.setCaretPosition(doc.getLength()); // Scroll to bottom
                             } catch (BadLocationException e) {
                                 System.err.println("ERROR: Document insert error: " + e.getMessage());
@@ -174,7 +186,17 @@ public class ConverterGUI extends JFrame {
             System.err.println("ERROR: Failed to redirect console output: " + e.getMessage());
         }
     }
-
+    /**
+     * 전달받은 로그 메시지를 현재 날짜 기준의 일별 로그 파일에 기록합니다.
+     *
+     * <p>로그 파일은 설정된 로그 디렉터리 하위에 {@code yyyyMMdd.log} 형식의 파일명으로 생성되며,
+     * 각 로그 라인은 {@code yyyy-MM-dd HH:mm:ss} 형식의 기록 시각과 함께 UTF-8 인코딩으로 추가됩니다.</p>
+     *
+     * <p>로그 디렉터리가 존재하지 않을 경우 생성을 시도하며, 디렉터리 생성 또는 파일 기록 중 오류가 발생하면
+     * 별도의 예외 전파 없이 로그 기록을 중단합니다.</p>
+     *
+     * @param line 로그 파일에 기록할 메시지 한 줄
+     */
     private void writeDailyLog(String line) {
         String logDate = new SimpleDateFormat("yyyyMMdd").format(new Date());
         File logDir = new File( ConverterMain.getLogDirSetting());
