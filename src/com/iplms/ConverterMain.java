@@ -10,6 +10,8 @@ import java.lang.management.MemoryUsage;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -130,6 +132,7 @@ public class ConverterMain {
                             rowData.pdfResult = "성공";
                             boolean isExtracted = extractTextFromPdf(destPdf, destTxt);
                             rowData.txtResult = isExtracted ? "성공" : "실패";
+                            moveSourceFileToOutputDir(srcFile, timestampedOutputDir);
                         } else {
                             rowData.pdfResult = "실패";
                             rowData.txtResult = "실패 (PDF 변환 실패됨)";
@@ -425,6 +428,44 @@ public class ConverterMain {
             return "\"" + value.replace("\"", "\"\"") + "\"";
         }
         return value;
+    }
+
+    private static void moveSourceFileToOutputDir(File srcFile, File targetDir) {
+        if (srcFile == null || targetDir == null || !srcFile.exists()) {
+            return;
+        }
+
+        try {
+            if (!targetDir.exists() && !targetDir.mkdirs()) {
+                System.err.println("WARNING: [원본 이동 실패] 출력 폴더 생성 실패: " + targetDir.getAbsolutePath());
+                return;
+            }
+
+            File movedFile = createUniqueTargetFile(targetDir, srcFile.getName());
+            Files.move(srcFile.toPath(), movedFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            System.out.println(">> [원본 이동 완료] " + srcFile.getName() + " -> " + movedFile.getAbsolutePath());
+        } catch (Exception e) {
+            System.err.println("WARNING: [원본 이동 실패] " + srcFile.getName() + " -> " + e.getMessage());
+        }
+    }
+
+    private static File createUniqueTargetFile(File targetDir, String fileName) {
+        File targetFile = new File(targetDir, fileName);
+        if (!targetFile.exists()) {
+            return targetFile;
+        }
+
+        int dotIndex = fileName.lastIndexOf('.');
+        String baseName = dotIndex > 0 ? fileName.substring(0, dotIndex) : fileName;
+        String extension = dotIndex > 0 ? fileName.substring(dotIndex) : "";
+        int sequence = 1;
+
+        do {
+            targetFile = new File(targetDir, baseName + "_" + sequence + extension);
+            sequence++;
+        } while (targetFile.exists());
+
+        return targetFile;
     }
 
     private static File writeErrorFile(File srcFile, String errMsg, File targetDir) {
