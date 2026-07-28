@@ -41,11 +41,11 @@ public class ConverterMain {
     private static String reportExcelName;
     private static int daemonIntervalMinutes;
     private static int serverPort;
+    private static long memoryLimitBytes;
     private static HttpServer httpServer;
     private static final ReentrantLock conversionLock = new ReentrantLock();
 
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
-    private static final long MEMORY_LIMIT_BYTES = 2L * 1024 * 1024 * 1024; // 2GB
 
     // Removed main method, as GUI will be the entry point
 
@@ -212,8 +212,8 @@ public class ConverterMain {
 
         System.out.printf(">> [메모리 확인] 현재 사용량: %.2f MB%n", usedMemory / (1024.0 * 1024.0));
 
-        if (usedMemory > MEMORY_LIMIT_BYTES) {
-            System.err.println("WARNING: [메모리 경고] 사용량이 임계값(2GB)을 초과했습니다. 강제 GC를 실행합니다.");
+        if (usedMemory > memoryLimitBytes) {
+            System.err.println("WARNING: [메모리 경고] 사용량이 임계값(" + formatBytesToMb(memoryLimitBytes) + " MB)을 초과했습니다. 강제 GC를 실행합니다.");
             System.gc();
 
             try {
@@ -226,13 +226,17 @@ public class ConverterMain {
             usedMemory = heapMemoryUsage.getUsed();
             System.out.printf(">> [메모리 재확인] GC 후 사용량: %.2f MB%n", usedMemory / (1024.0 * 1024.0));
 
-            if (usedMemory > MEMORY_LIMIT_BYTES) {
-                String errorMessage = "메모리 확보 실패. GC 실행 후에도 사용량이 2GB를 초과하여 시스템을 강제 종료합니다.";
+            if (usedMemory > memoryLimitBytes) {
+                String errorMessage = "메모리 확보 실패. GC 실행 후에도 사용량이 " + formatBytesToMb(memoryLimitBytes) + " MB를 초과하여 시스템을 강제 종료합니다.";
                 System.err.println("FATAL ERROR: " + errorMessage);
                 writeSystemErrorFile(errorMessage);
                 System.exit(1);
             }
         }
+    }
+
+    private static String formatBytesToMb(long bytes) {
+        return String.format("%.2f", bytes / (1024.0 * 1024.0));
     }
 
     private static void scanDirectory(File dir, List<File> resultList) {
@@ -595,6 +599,7 @@ public class ConverterMain {
         outputDirSetting = prop.getProperty("converter.output.dir", "");
         logDirSetting = prop.getProperty("converter.log.dir", "C:\\IPLMS\\95_logs"); // Load log directory
         guiLogMaxLength = Integer.parseInt(prop.getProperty("converter.gui.log.max.length", "500000")); // Load GUI log max length
+        memoryLimitBytes = Long.parseLong(prop.getProperty("converter.memory.limit.bytes", String.valueOf(2L * 1024 * 1024 * 1024))); // Load memory limit
         timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "90"));
         reportExcelName = prop.getProperty("converter.report.excel.name", "conversion_report.csv");
         daemonIntervalMinutes = Integer.parseInt(prop.getProperty("daemon.interval.minutes", "10"));
