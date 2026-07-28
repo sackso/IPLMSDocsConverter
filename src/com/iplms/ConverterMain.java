@@ -274,26 +274,46 @@ public class ConverterMain {
     private static boolean runLibreOfficeConverter(File srcFile, File destPdf) throws Exception {
         String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
         File outputDir = destPdf.getParentFile();
-        ProcessBuilder pb;
+        List<String> command = new ArrayList<>();
 
-        if ("hwp".equals(ext) || "hwpx".equals(ext)) {
-            pb = new ProcessBuilder(
-                    libreOfficePath,
-                    "--headless",
-                    "--infilter=Hwp2002_File",
-                    "--convert-to", "pdf:writer_pdf_Export",
-                    "--outdir", outputDir.getAbsolutePath(),
-                    srcFile.getAbsolutePath()
-            );
-        } else {
-            pb = new ProcessBuilder(
-                    libreOfficePath,
-                    "--headless",
-                    "--convert-to", "pdf",
-                    "--outdir", outputDir.getAbsolutePath(),
-                    srcFile.getAbsolutePath()
-            );
+        command.add(libreOfficePath);
+        command.add("--headless");
+        command.add("--norestore");
+
+        // 포맷별 맞춤 필터 및 옵션 매핑
+        switch (ext) {
+            case "hwp":
+            case "hwpx":
+                command.add("--infilter=Hwp2002_File");
+                command.add("--convert-to");
+                command.add("pdf:writer_pdf_Export");
+                break;
+            case "docx":
+            case "doc":
+                command.add("--convert-to");
+                command.add("pdf:writer_pdf_Export");
+                break;
+            case "xlsx":
+            case "xls":
+                command.add("--convert-to");
+                command.add("pdf:calc_pdf_Export");
+                break;
+            case "pptx":
+            case "ppt":
+                command.add("--convert-to");
+                command.add("pdf:impress_pdf_Export");
+                break;
+            default:
+                command.add("--convert-to");
+                command.add("pdf");
+                break;
         }
+
+        command.add("--outdir");
+        command.add(outputDir.getAbsolutePath());
+        command.add(srcFile.getAbsolutePath());
+
+        ProcessBuilder pb = new ProcessBuilder(command);
 
         Process process = pb.start();
         if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
