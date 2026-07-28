@@ -25,32 +25,34 @@ graph TD
     C --> API[내장 HttpServer 시작 /api/convert]
 
     D --> E[runConversionCycle 실행]
-    E --> F[메모리 사용량 확인 - 2GB 초과 시 GC 및 치명 오류 처리]
+    E --> F[메모리 사용량 확인 - 설정 임계값 초과 시 GC 및 치명 오류 처리]
     F --> G[입력 폴더 유효성 검증]
-    G --> H[yyyyMMddHHmm 타임스탬프 출력 폴더 생성]
+    G --> H[기본 출력 폴더 생성]
     H --> I[입력 폴더 재귀 탐색 및 대상 문서 수집]
     I --> J[단일 스레드 ExecutorService 작업 순차 제출]
 
     subgraph BatchTask[개별 배치 Task]
-        K[기존 PDF/TXT 삭제] --> L[확장자 및 detectFileVersion 처리]
-        L --> M{확장자 판별}
-        M -- DWG --> N[runAutoCadConverter]
-        N --> O[AcCoreConsole.exe /i /s /l 호출]
-        M -- MS Office/HWP/HWPX --> P[ReentrantLock conversionLock 획득]
-        P --> Q[runLibreOfficeConverter]
-        Q --> R[LibreOffice Headless PDF 변환]
-        O --> S[PDF 생성 확인 및 필요 시 이동/이름 변경]
-        R --> S
-        S --> T[extractTextFromPdf - Apache PDFBox]
-        T --> U[TXT UTF-8 저장]
-        U --> V[ReportRow 적재]
-        L --> W[예외/타임아웃 발생 시 *_ERR.txt 생성]
+        K[입력 기준 상대 경로 계산 및 출력 하위 폴더 생성] --> L[기존 PDF/TXT 삭제]
+        L --> M[확장자 및 detectFileVersion 처리]
+        M --> N{확장자 판별}
+        N -- DWG --> O[runAutoCadConverter]
+        O --> P[AcCoreConsole.exe /i /s /l 호출]
+        N -- MS Office/HWP/HWPX --> Q[ReentrantLock conversionLock 획득]
+        Q --> R[runLibreOfficeConverter]
+        R --> S[LibreOffice Headless PDF 변환]
+        P --> T[PDF 생성 확인 및 필요 시 이동/이름 변경]
+        S --> T
+        T --> U[extractTextFromPdf - Apache PDFBox]
+        U --> V[TXT UTF-8 저장]
+        V --> W[변환 성공 원본 파일을 동일 상대 경로로 이동]
+        W --> X[ReportRow 적재]
+        M --> Y[예외/타임아웃 발생 시 동일 상대 경로에 *_ERR.txt 생성]
     end
 
-    J --> X[작업별 timeoutSeconds 제한 적용]
-    X --> Y[generateCsvReport - UTF-8 BOM CSV 생성]
-    Y --> Z[yyyyMMddHHmm_result.txt 결과 파일 경로 목록 생성]
-    Z --> AA[주기 종료 및 다음 실행 대기]
+    J --> BA[작업별 timeoutSeconds 제한 적용]
+    BA --> BB[generateCsvReport - output 바로 하위에 UTF-8 BOM CSV 생성]
+    BB --> BC[yyyyMMddHHmm_result.txt 결과 파일 경로 목록 생성]
+    BC --> AA[주기 종료 및 다음 실행 대기]
 
     API --> AB{GET/POST/OPTIONS 요청}
     AB --> AC[filePath 파라미터 파싱]
@@ -94,7 +96,7 @@ graph TD
   * 일반 문서 변환은 `converter.timeout.seconds` 값을 사용합니다. 기본값은 90초입니다.
   * DWG 변환은 `converter.autocad.timeout.seconds` 값을 별도로 사용합니다. 기본값은 120초입니다.
   * 제한 시간을 초과하면 프로세스를 강제 종료하고 실패 리포트 및 오류 파일을 생성합니다.
-* **메모리 가드**: 주기 시작 시 JVM Heap 사용량을 확인하며, 2GB 초과 시 GC를 수행합니다. GC 후에도 초과 상태가 유지되면 `SYSTEM_FATAL_ERROR.txt`를 기록하고 프로세스를 종료합니다.
+* **메모리 가드**: 주기 시작 시 JVM Heap 사용량을 확인하며, `converter.memory.limit.bytes` 설정값 초과 시 GC를 수행합니다. GC 후에도 초과 상태가 유지되면 `SYSTEM_FATAL_ERROR.txt`를 기록하고 프로세스를 종료합니다.
 * **무결성 덮어쓰기 가드**: 변환 시작 전 기존 결과물 `.pdf`, `.txt`를 삭제하여 stale 파일과 파일 잠금 영향을 줄입니다.
 * **오류 파일 생성**: 변환 중 예외 또는 타임아웃 발생 시 원본 파일명 기반 `*_ERR.txt`를 생성하고 오류 상세를 기록합니다.
 * **엑셀 인코딩 가드 (UTF-8 BOM)**: CSV 리포트 생성 시 `\uFEFF` BOM을 선두에 기록하여 Excel에서 한글 깨짐을 방지합니다.
@@ -143,6 +145,9 @@ converter.autocad.timeout.seconds=120
 # GUI 및 파일 로그 설정
 converter.log.dir=C:\\IPLMS\\95_logs
 converter.gui.log.max.length=500000
+
+# JVM Heap 메모리 사용량 제한(bytes)
+converter.memory.limit.bytes=2147483648
 ```
 
 ---
@@ -268,7 +273,7 @@ filePath=C%3A%5CIPLMS%5C91_input%5Csample.docx
 * **권장 경로**: 모든 솔루션은 `C:\IPLMS` 루트 디렉터리에 설치하는 것을 권장합니다.
 * **폴더 구조**:
   * `C:\IPLMS\91_input`: 원본 문서 보관
-  * `C:\IPLMS\92_output`: 결과 PDF, TXT, CSV 리포트 및 주기별 출력 폴더 저장
+  * `C:\IPLMS\92_output`: 결과 PDF, TXT, 원본 이동 파일, CSV 리포트 및 결과 목록 저장
   * `C:\IPLMS\95_logs`: GUI/시스템 일자별 로그 저장
   * `C:\IPLMS\LibreOfficePortable`: LibreOffice 변환 엔진 영역
   * `C:\IPLMS\scripts`: AutoCAD 변환용 `.scr` 파일 보관
@@ -280,13 +285,16 @@ filePath=C%3A%5CIPLMS%5C91_input%5Csample.docx
 
 ### 10.1. 정기 배치 변환 산출물
 
-* **주기별 출력 폴더**: `converter.output.dir/yyyyMMddHHmm/`
-* **변환 PDF**: 원본 파일명 기반 `.pdf`
-* **텍스트 추출본**: 원본 파일명 기반 `.txt`
-* **오류 파일**: 변환 실패 시 원본 파일명 기반 `*_ERR.txt`
-* **시스템 리포트**: `conversion_report.csv`
+* **출력 루트 폴더**: `converter.output.dir/`
+* **하위 폴더 구조**: `converter.input.dir` 기준 상대 경로를 `converter.output.dir` 하위에 동일하게 생성
+* **변환 PDF**: 원본 파일명 기반 `.pdf`, 원본과 동일한 상대 경로에 저장
+* **텍스트 추출본**: 원본 파일명 기반 `.txt`, 원본과 동일한 상대 경로에 저장
+* **원본 파일 이동본**: PDF 변환 성공 시 원본 파일을 동일 상대 경로로 이동
+* **원본 파일명 충돌 처리**: 이동 대상 파일명이 이미 존재하면 `_1`, `_2` 순번을 붙여 저장
+* **오류 파일**: 변환 실패 시 원본 파일명 기반 `*_ERR.txt`, 원본과 동일한 상대 경로에 저장
+* **시스템 리포트**: `conversion_report.csv`, `converter.output.dir` 바로 하위에 저장
   * 컬럼: 번호, 파일경로, 파일명, 파일종류, pdf변환결과, 텍스트추출결과, 파일용량(KB), 소요시간(초)
-* **실행 목록**: `yyyyMMddHHmm_result.txt`
+* **실행 목록**: `yyyyMMddHHmm_result.txt`, `converter.output.dir` 바로 하위에 저장
   * 해당 주기에 생성 또는 생성 시도된 PDF/TXT/ERR/CSV 파일 경로 목록
 
 ### 10.2. REST API 즉시 변환 산출물
