@@ -70,14 +70,13 @@ public class ConverterMain {
             }
 
             File baseOutputDir = new File(outputDirSetting.isEmpty() ? inputDir.getAbsolutePath() : outputDirSetting.trim());
-            File timestampedOutputDir = new File(baseOutputDir, timestamp);
-            if (!timestampedOutputDir.exists()) {
-                timestampedOutputDir.mkdirs();
+            if (!baseOutputDir.exists()) {
+                baseOutputDir.mkdirs();
             }
 
             System.out.println(">> [IPLMS Hybrid Converter] 폴더 탐색 및 안전 순차 변환 가동 개시");
             System.out.println(">> 탐색 대상 입력 폴더: " + inputDir.getAbsolutePath());
-            System.out.println(">> 이번 주기 출력 폴더: " + timestampedOutputDir.getAbsolutePath());
+            System.out.println(">> 출력 폴더: " + baseOutputDir.getAbsolutePath());
             System.out.println(">> LibreOffice 경로: " + libreOfficePath);
             System.out.println(">> logs 경로: " + logDirSetting);
 
@@ -98,8 +97,13 @@ public class ConverterMain {
             for (File srcFile : targetFiles) {
                 Callable<Boolean> conversionTask = () -> {
                     String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
-                    File destPdf = new File(timestampedOutputDir, baseName + ".pdf");
-                    File destTxt = new File(timestampedOutputDir, baseName + ".txt");
+                    File relativeOutputDir = resolveRelativeOutputDir(inputDir, baseOutputDir, srcFile.getParentFile());
+                    if (!relativeOutputDir.exists() && !relativeOutputDir.mkdirs()) {
+                        throw new IOException("출력 하위 폴더 생성 실패: " + relativeOutputDir.getAbsolutePath());
+                    }
+
+                    File destPdf = new File(relativeOutputDir, baseName + ".pdf");
+                    File destTxt = new File(relativeOutputDir, baseName + ".txt");
 
                     resultFilePaths.add(destPdf.getAbsolutePath());
                     resultFilePaths.add(destTxt.getAbsolutePath());
@@ -132,14 +136,14 @@ public class ConverterMain {
                             rowData.pdfResult = "성공";
                             boolean isExtracted = extractTextFromPdf(destPdf, destTxt);
                             rowData.txtResult = isExtracted ? "성공" : "실패";
-                            moveSourceFileToOutputDir(srcFile, timestampedOutputDir);
+                            moveSourceFileToOutputDir(srcFile, relativeOutputDir);
                         } else {
                             rowData.pdfResult = "실패";
                             rowData.txtResult = "실패 (PDF 변환 실패됨)";
                         }
                     } catch (Exception e) {
                         System.err.println("ERROR: [런타임 에러]: " + srcFile.getName());
-                        File errFile = writeErrorFile(srcFile, e.getMessage(), timestampedOutputDir);
+                        File errFile = writeErrorFile(srcFile, e.getMessage(), relativeOutputDir);
                         if (errFile != null) resultFilePaths.add(errFile.getAbsolutePath());
                         rowData.pdfResult = "실패 (에러)";
                         rowData.txtResult = "실패";
@@ -174,7 +178,8 @@ public class ConverterMain {
                     timeoutRow.elapsedTime = String.valueOf(timeoutSeconds) + ".00";
 
                     reportQueue.add(timeoutRow);
-                    File errFile = writeErrorFile(srcFile, "제한시간 " + timeoutSeconds + "초 초과로 인한 강제 중단", timestampedOutputDir);
+                    File relativeOutputDir = resolveRelativeOutputDir(inputDir, baseOutputDir, srcFile.getParentFile());
+                    File errFile = writeErrorFile(srcFile, "제한시간 " + timeoutSeconds + "초 초과로 인한 강제 중단", relativeOutputDir);
                     if (errFile != null) resultFilePaths.add(errFile.getAbsolutePath());
                 } catch (Exception e) {
                     System.err.println("WARNING: [경고] 내부 스레드 제어 오류 패스: " + srcFile.getName() + " -> " + e.getMessage());
@@ -191,7 +196,7 @@ public class ConverterMain {
             }
 
             if (!reportQueue.isEmpty()) {
-                File csvFile = generateCsvReport(timestampedOutputDir);
+                File csvFile = generateCsvReport(baseOutputDir);
                 if (csvFile != null) resultFilePaths.add(csvFile.getAbsolutePath());
             }
 
@@ -452,6 +457,24 @@ public class ConverterMain {
             return "\"" + value.replace("\"", "\"\"") + "\"";
         }
         return value;
+    }
+
+    private static File resolveRelativeOutputDir(File inputDir, File baseOutputDir, File sourceParentDir) {
+        if (inputDir == null || baseOutputDir == null || sourceParentDir == null) {
+            return baseOutputDir;
+        }
+
+        try {
+            java.nio.file.Path inputPath = inputDir.getCanonicalFile().toPath();
+            java.nio.file.Path sourceParentPath = sourceParentDir.getCanonicalFile().toPath();
+            java.nio.file.Path relativePath = inputPath.relativize(sourceParentPath);
+            return relativePath.toString().isEmpty()
+                    ? baseOutputDir
+                    : new File(baseOutputDir, relativePath.toString());
+        } catch (Exception e) {
+            System.err.println("WARNING: [출력 경로 계산 실패] 입력 폴더 기준 상대 경로를 계산하지 못해 기본 출력 폴더를 사용합니다: " + e.getMessage());
+            return baseOutputDir;
+        }
     }
 
     private static void moveSourceFileToOutputDir(File srcFile, File targetDir) {
