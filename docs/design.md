@@ -66,21 +66,25 @@ graph TD
 ## 3. 시스템 아키텍처 (System Architecture)
 
 1. **GUI (`ConverterGUI`)**
+   
    * `JFrame` 기반 메인 윈도우(800x600)를 제공합니다.
    * `JTextPane`과 `StyledDocument`를 사용하여 로그 태그별 색상 스타일을 적용합니다.
    * 제공 버튼: `실행`, `종료`, `출력 폴더 열기`, `로그 지우기`.
    * 표준 출력/오류를 GUI 콘솔로 리다이렉션하고, 동일 내용을 일자별 로그 파일로 저장합니다.
 
 2. **메인 스케줄러**
+   
    * `ScheduledExecutorService`를 사용하여 `daemon.interval.minutes` 설정 주기마다 `ConverterMain.runConversionCycle()`을 실행합니다.
    * 배치 변환 내부는 `Executors.newSingleThreadExecutor()`로 구성되어 대상 파일을 순차 처리합니다.
 
 3. **내장 웹 서버**
+   
    * Java 내장 `HttpServer`를 사용합니다.
    * `/api/convert` 엔드포인트를 통해 단일 파일 즉시 변환 요청을 처리합니다.
    * 서비스 시작 시 서버를 시작하고, 서비스 종료 시 `stop(2)`로 종료합니다.
 
 4. **변환 제어 유닛 (`ConverterMain`)**
+   
    * **LibreOffice Engine**: MS Office, HWP, HWPX 문서의 PDF 변환을 담당합니다.
    * **AutoCAD AcCoreConsole**: DWG 도면의 PDF 변환을 담당합니다.
    * **Apache PDFBox**: 변환된 PDF에서 텍스트를 추출하여 UTF-8 TXT 파일을 생성합니다.
@@ -102,17 +106,18 @@ graph TD
 * **엑셀 인코딩 가드 (UTF-8 BOM)**: CSV 리포트 생성 시 `\uFEFF` BOM을 선두에 기록하여 Excel에서 한글 깨짐을 방지합니다.
 * **CSV Escape 처리**: 쉼표, 큰따옴표, 개행이 포함된 값은 CSV 규칙에 맞게 큰따옴표로 감싸고 내부 큰따옴표를 이스케이프합니다.
 
----
 
-## 4.1. 프로세스 및 메모리 신뢰성 보장 (추가)
+
+### 4.1. 프로세스 및 메모리 신뢰성 보장 (추가)
 
 * **LibreOffice 사용자 프로필 격리 (UserInstallation)**:
-   * LibreOffice 실행 시 사용자 프로필 동시 접근 충돌을 방지하기 위해 `converter.libreoffice.profile.path` 기반으로 `-env:UserInstallation` 옵션을 주입합니다.
+  * LibreOffice 실행 시 사용자 프로필 동시 접근 충돌을 방지하기 위해 `converter.libreoffice.profile.path` 기반으로 `-env:UserInstallation` 옵션을 주입합니다.
 * **GUI 콘솔 메모리 버퍼 제어**:
-   * `ConverterGUI`의 `JTextPane` 버퍼 크기가 `converter.gui.log.max.length`(기본 500,000자)를 초과할 경우, 상위 50%의 오래된 로그를 자동으로 삭제(Trim)하여 GUI 메모리 낭비를 방지합니다.
+  * `ConverterGUI`의 `JTextPane` 버퍼 크기가 `converter.gui.log.max.length`(기본 500,000자)를 초과할 경우, 상위 50%의 오래된 로그를 자동으로 삭제(Trim)하여 GUI 메모리 낭비를 방지합니다.
 * **원본 이동 시 파일명 충돌 회피 (Unique File Naming)**:
-   * 변환 성공 후 원본 파일을 출력 폴더로 이동 시, 동일 파일명이 이미 존재하는 경우 `파일명_1.ext`, `파일명_2.ext`와 같이 순번을 자동 부여하여 파일 덮어쓰기 손실을 방지합니다.
-   * 
+  * 변환 성공 후 원본 파일을 출력 폴더로 이동 시, 동일 파일명이 이미 존재하는 경우 `파일명_1.ext`, `파일명_2.ext`와 같이 순번을 자동 부여하여 파일 덮어쓰기 손실을 방지합니다.
+  * 
+
 ---
 
 ## 5. 설정 로딩 및 환경 설정 (`config.properties`)
@@ -192,11 +197,13 @@ accoreconsole.exe /i "입력파일.dwg" /s "스크립트.scr" /l "en-US"
 ```
 
 * **실행 전 검증**
+  
   * `converter.autocad.path` 값이 비어 있지 않은지 확인합니다.
   * `AcCoreConsole.exe` 파일 존재 여부를 확인합니다.
   * `converter.autocad.script.path` 값과 `.scr` 파일 존재 여부를 확인합니다.
 
 * **운영 고려 사항**
+  
   * 운영 서버에 AutoCAD 정식 라이선스가 활성화되어 있어야 합니다.
   * DWG 렌더링 품질을 위해 도면에서 사용하는 SHX 폰트가 시스템에 사전 설치되어야 합니다.
   * 생성 PDF는 우선 출력 폴더에서 확인하고, 없을 경우 원본 파일 폴더에서도 확인합니다.
