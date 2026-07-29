@@ -2,7 +2,6 @@ package com.iplms;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
-
 import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
@@ -21,8 +20,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
@@ -35,8 +32,8 @@ public class ConverterMain {
     private static int autoCadTimeoutSeconds;
     private static String inputDirSetting;
     private static String outputDirSetting;
-    private static String logDirSetting; // Added for log directory
-    private static int guiLogMaxLength; // Added for GUI log max length
+    private static String logDirSetting;
+    private static int guiLogMaxLength;
     private static int timeoutSeconds;
     private static String reportExcelName;
     private static int daemonIntervalMinutes;
@@ -47,9 +44,7 @@ public class ConverterMain {
 
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
 
-    // Removed main method, as GUI will be the entry point
-
-    public static void runConversionCycle() { // Made public for GUI to access
+    public static void runConversionCycle() {
         try {
             String timestamp = new SimpleDateFormat("yyyyMMddHHmm").format(new Date());
             System.out.println("\n\n=====================================================");
@@ -92,7 +87,7 @@ public class ConverterMain {
 
             ExecutorService conversionExecutor = Executors.newSingleThreadExecutor();
             reportQueue.clear();
-            List<String> resultFilePaths = new CopyOnWriteArrayList<>(); // Thread-safe list for result paths
+            List<String> resultFilePaths = new CopyOnWriteArrayList<>();
 
             for (File srcFile : targetFiles) {
                 Callable<Boolean> conversionTask = () -> {
@@ -289,7 +284,13 @@ public class ConverterMain {
         command.add("--headless");
         command.add("--norestore");
 
-        // 포맷별 맞춤 필터 및 옵션 매핑
+        // 사용자 프로필 경로 설정
+        String codePath = ConverterMain.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
+        File baseDir = new File(codePath).getParentFile();
+        File userProfileDir = new File(baseDir, "registrymodifications.xcu");
+        command.add("-env:UserInstallation=file:///" + userProfileDir.getAbsolutePath().replace("\\", "/"));
+
+        // 포맷별 필터 매핑
         switch (ext) {
             case "hwp":
             case "hwpx":
@@ -398,13 +399,7 @@ public class ConverterMain {
     }
 
     private static String detectFileVersion(File file, String ext) {
-        // ... (내용 동일)
         return "표준 규격";
-    }
-
-    private static String parseTagValueFromStream(InputStream is, String key, String defaultPrefix) throws IOException {
-        // ... (내용 동일)
-        return defaultPrefix;
     }
 
     private static boolean extractTextFromPdf(File pdfFile, File destTxt) {
@@ -430,7 +425,7 @@ public class ConverterMain {
         int index = 1;
 
         try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(new FileOutputStream(csvFile), StandardCharsets.UTF_8))) {
-            pw.write("\uFEFF"); // BOM for Excel
+            pw.write("\uFEFF");
             pw.println("번호,파일경로,파일명,파일종류,pdf변환결과(성공/실패),텍스트추출결과,파일용량(KB),소요시간(초)");
 
             for (ReportRow row : reportQueue) {
@@ -559,11 +554,10 @@ public class ConverterMain {
         }
     }
 
-    public static void loadProperties() { // Made public for GUI to access
+    public static void loadProperties() {
         Properties prop = new Properties();
         boolean loaded = false;
 
-        // 1. 실행 중인 JAR 또는 클래스 파일의 상위 폴더(baseDir)에서 config.properties 탐색 (외장 설정 지원)
         try {
             String codePath = ConverterMain.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
             if (codePath != null) {
@@ -573,23 +567,19 @@ public class ConverterMain {
                     if (propFile.exists()) {
                         try (InputStream is = new FileInputStream(propFile)) {
                             prop.load(is);
-                            // System.out.println(">> [설정 로드 성공] 실행 파일 상위 폴더 경로: " + propFile.getAbsolutePath()); // Removed
                             loaded = true;
                         }
                     }
                 }
             }
         } catch (Exception e) {
-            // 예외 발생 시 무시하고 다음 단계로 진행
         }
 
-        // 2. 현재 작업 디렉토리(Working Directory)에서 config.properties 탐색
         if (!loaded) {
             File propFile = new File("config.properties");
             if (propFile.exists()) {
                 try (InputStream is = new FileInputStream(propFile)) {
                     prop.load(is);
-                    // System.out.println(">> [설정 로드 성공] 작업 디렉토리(Working Directory) 경로: " + propFile.getAbsolutePath()); // Removed
                     loaded = true;
                 } catch (IOException e) {
                     System.err.println("WARNING: config.properties 외부 파일을 찾았으나 읽기에 실패했습니다: " + e.getMessage());
@@ -597,12 +587,10 @@ public class ConverterMain {
             }
         }
 
-        // 3. JAR 내부 혹은 클래스패스(Classpath) 루트에서 config.properties 탐색 (내장 설정 및 IDE 디버그용)
         if (!loaded) {
             try (InputStream is = ConverterMain.class.getResourceAsStream("/config.properties")) {
                 if (is != null) {
                     prop.load(is);
-                    // System.out.println(">> [설정 로드 성공] 클래스패스(JAR 내부 리소스 / IDE 빌드 출력)에서 로드 완료"); // Removed
                     loaded = true;
                 }
             } catch (IOException e) {
@@ -620,16 +608,16 @@ public class ConverterMain {
         autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "120"));
         inputDirSetting = prop.getProperty("converter.input.dir", "");
         outputDirSetting = prop.getProperty("converter.output.dir", "");
-        logDirSetting = prop.getProperty("converter.log.dir", "C:\\IPLMS\\95_logs"); // Load log directory
-        guiLogMaxLength = Integer.parseInt(prop.getProperty("converter.gui.log.max.length", "500000")); // Load GUI log max length
-        memoryLimitBytes = Long.parseLong(prop.getProperty("converter.memory.limit.bytes", String.valueOf(2L * 1024 * 1024 * 1024))); // Load memory limit
+        logDirSetting = prop.getProperty("converter.log.dir", "C:\\IPLMS\\95_logs");
+        guiLogMaxLength = Integer.parseInt(prop.getProperty("converter.gui.log.max.length", "500000"));
+        memoryLimitBytes = Long.parseLong(prop.getProperty("converter.memory.limit.bytes", String.valueOf(2L * 1024 * 1024 * 1024)));
         timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "90"));
         reportExcelName = prop.getProperty("converter.report.excel.name", "conversion_report.csv");
         daemonIntervalMinutes = Integer.parseInt(prop.getProperty("daemon.interval.minutes", "10"));
-        serverPort = Integer.parseInt(prop.getProperty("converter.server.port", "9119")); // Load server port
+        serverPort = Integer.parseInt(prop.getProperty("converter.server.port", "9119"));
     }
 
-    public static int getDaemonIntervalMinutes() { // Added getter for GUI to retrieve interval
+    public static int getDaemonIntervalMinutes() {
         return daemonIntervalMinutes;
     }
 
@@ -639,6 +627,7 @@ public class ConverterMain {
         }
         return outputDirSetting.trim();
     }
+
     public static String getLogDirSetting() {
         if (logDirSetting == null || logDirSetting.trim().isEmpty()) {
             return logDirSetting != null ? logDirSetting.trim() : "";
@@ -646,8 +635,6 @@ public class ConverterMain {
         return logDirSetting.trim();
     }
 
-
-    // Add startHttpServer method
     public static void startHttpServer() {
         if (httpServer != null) {
             System.out.println(">> [HttpServer] 서버가 이미 실행 중입니다.");
@@ -656,7 +643,7 @@ public class ConverterMain {
         try {
             httpServer = HttpServer.create(new InetSocketAddress(serverPort), 0);
             httpServer.createContext("/api/convert", new ConvertHandler());
-            httpServer.setExecutor(Executors.newCachedThreadPool()); // Use a cached thread pool
+            httpServer.setExecutor(Executors.newCachedThreadPool());
             httpServer.start();
             System.out.println(">> [HttpServer] 내장 웹 서버가 포트 " + serverPort + "에서 실행 중입니다.");
         } catch (Exception e) {
@@ -665,27 +652,25 @@ public class ConverterMain {
         }
     }
 
-    // Add stopHttpServer method
     public static void stopHttpServer() {
         if (httpServer != null) {
             System.out.println(">> [HttpServer] 서버 종료 중...");
-            httpServer.stop(2); // Stop with a 2-second delay
+            httpServer.stop(2);
             httpServer = null;
             System.out.println(">> [HttpServer] 서버가 성공적으로 종료되었습니다.");
         }
     }
 
-    // Add ConvertHandler inner class
     private static class ConvertHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*"); // CORS
+            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
             exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
 
             if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
                 exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
-                exchange.sendResponseHeaders(204, -1); // No content for OPTIONS
+                exchange.sendResponseHeaders(204, -1);
                 return;
             }
 
@@ -704,10 +689,10 @@ public class ConverterMain {
                 while ((line = br.readLine()) != null) {
                     body.append(line);
                 }
-                
+
                 if (contentType != null && contentType.contains("application/json")) {
                     filePath = parseJsonFilePath(body.toString());
-                } else { // Assume form-urlencoded if not JSON
+                } else {
                     Map<String, String> params = parseQueryParams(body.toString());
                     filePath = params.get("filePath");
                 }
@@ -729,10 +714,10 @@ public class ConverterMain {
 
             String name = srcFile.getName().toLowerCase();
             if (!(name.endsWith(".docx") || name.endsWith(".doc") ||
-                  name.endsWith(".xlsx") || name.endsWith(".xls") ||
-                  name.endsWith(".pptx") || name.endsWith(".ppt") ||
-                  name.endsWith(".hwpx") || name.endsWith(".hwp") ||
-                  name.endsWith(".dwg"))) {
+                    name.endsWith(".xlsx") || name.endsWith(".xls") ||
+                    name.endsWith(".pptx") || name.endsWith(".ppt") ||
+                    name.endsWith(".hwpx") || name.endsWith(".hwp") ||
+                    name.endsWith(".dwg"))) {
                 sendResponse(exchange, 400, "{\"status\":\"error\", \"message\":\"Unsupported file format. Supported: docx, doc, xlsx, xls, pptx, ppt, hwpx, hwp, dwg\"}");
                 return;
             }
@@ -775,14 +760,14 @@ public class ConverterMain {
                         } catch (Exception ignored) {
                         }
                     }
-                    
+
                     String jsonResponse = String.format(
-                        "{\"status\":\"success\", \"pdfPath\":\"%s\", \"txtPath\":\"%s\", \"txtExtracted\":%b, \"extractedTextContent\":\"%s\", \"elapsedTime\":\"%.2f초\"}",
-                        escapeJson(destPdf.getAbsolutePath()),
-                        escapeJson(destTxt.getAbsolutePath()),
-                        isTxtExtracted,
-                        escapeJson(textContent),
-                        elapsedTimeSeconds
+                            "{\"status\":\"success\", \"pdfPath\":\"%s\", \"txtPath\":\"%s\", \"txtExtracted\":%b, \"extractedTextContent\":\"%s\", \"elapsedTime\":\"%.2f초\"}",
+                            escapeJson(destPdf.getAbsolutePath()),
+                            escapeJson(destTxt.getAbsolutePath()),
+                            isTxtExtracted,
+                            escapeJson(textContent),
+                            elapsedTimeSeconds
                     );
                     sendResponse(exchange, 200, jsonResponse);
                 } else {
@@ -806,14 +791,12 @@ public class ConverterMain {
                     String value = idx > 0 && pair.length() > idx + 1 ? URLDecoder.decode(pair.substring(idx + 1), StandardCharsets.UTF_8.name()) : "";
                     result.put(key, value);
                 } catch (Exception e) {
-                    // ignore
                 }
             }
             return result;
         }
 
         private String parseJsonFilePath(String json) {
-            // Simple JSON parsing for filePath. Assumes "filePath": "value"
             if (json == null || json.isEmpty()) return null;
             int keyIdx = json.indexOf("\"filePath\"");
             if (keyIdx == -1) return null;
@@ -824,7 +807,7 @@ public class ConverterMain {
             int endQuote = json.indexOf("\"", startQuote + 1);
             if (endQuote == -1) return null;
             String escapedPath = json.substring(startQuote + 1, endQuote);
-            return escapedPath.replace("\\\\", "\\").replace("\\\"", "\""); // Unescape JSON string
+            return escapedPath.replace("\\\\", "\\").replace("\\\"", "\"");
         }
 
         private void sendResponse(HttpExchange exchange, int statusCode, String responseText) throws IOException {
@@ -838,10 +821,10 @@ public class ConverterMain {
         private String escapeJson(String value) {
             if (value == null) return "";
             return value.replace("\\", "\\\\")
-                        .replace("\"", "\\\"")
-                        .replace("\r", "\\r")
-                        .replace("\n", "\\n")
-                        .replace("\t", "\\t");
+                    .replace("\"", "\\\"")
+                    .replace("\r", "\\r")
+                    .replace("\n", "\\n")
+                    .replace("\t", "\\t");
         }
     }
 

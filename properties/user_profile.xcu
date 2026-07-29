@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  
+  <!-- 1. LibreOffice Writer (Word, HWP 문서용) -->
+  <item oor:path="/org.openoffice.Office.Writer/DefaultFont">
+    <prop oor:name="Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Heading" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_List" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+  </item>
+
+  <!-- 2. LibreOffice Calc (Excel .xlsx, .xls 문서용) -->
+  <item oor:path="/org.openoffice.Office.Calc/DefaultFont">
+    <prop oor:name="Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Heading" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+  </item>
+
+  <!-- 3. LibreOffice Impress (PowerPoint .pptx, .ppt 문서용) -->
+  <item oor:path="/org.openoffice.Office.Impress/DefaultFont">
+    <prop oor:name="Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Heading" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="TextFittedToSize" oor:type="xs:boolean"><value>true</value></prop>
+  </item>
+
+</oor:items>
