@@ -27,6 +27,7 @@ import com.sun.net.httpserver.HttpExchange;
 public class ConverterMain {
 
     private static String libreOfficePath;
+    private static String libreOfficeProfilePath;
     private static String autoCadPath;
     private static String autoCadScriptPath;
     private static int autoCadTimeoutSeconds;
@@ -285,10 +286,8 @@ public class ConverterMain {
         command.add("--norestore");
 
         // 사용자 프로필 경로 설정
-        String codePath = ConverterMain.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
-        File baseDir = new File(codePath).getParentFile();
-        File userProfileDir = new File(baseDir, "registrymodifications.xcu");
-        command.add("-env:UserInstallation=file:///" + userProfileDir.getAbsolutePath().replace("\\", "/"));
+        File baseDir = new File(libreOfficeProfilePath);
+        File userProfileDir = new File(baseDir, "libreoffice_profile");
 
         // 포맷별 필터 매핑
         switch (ext) {
@@ -300,20 +299,25 @@ public class ConverterMain {
                 break;
             case "docx":
             case "doc":
+                command.add("-env:UserInstallation=file:///" + userProfileDir.getAbsolutePath().replace("\\", "/"));
                 command.add("--convert-to");
                 command.add("pdf:writer_pdf_Export");
                 break;
             case "xlsx":
             case "xls":
+                command.add("-env:UserInstallation=file:///" + userProfileDir.getAbsolutePath().replace("\\", "/"));
                 command.add("--convert-to");
                 command.add("pdf:calc_pdf_Export");
                 break;
             case "pptx":
             case "ppt":
+                command.add("-env:UserInstallation=file:///" + userProfileDir.getAbsolutePath().replace("\\", "/"));
                 command.add("--convert-to");
-                command.add("pdf:impress_pdf_Export");
+                // impress_pdf_Export 필터 옵션 지정 (텍스트 레이아웃 보존 강화)
+                command.add("pdf:impress_pdf_Export:{\"PDFBugExport\":{\"type\":\"boolean\",\"value\":\"false\"},\"ExportFormFields\":{\"type\":\"boolean\",\"value\":\"true\"}}");
                 break;
             default:
+                command.add("-env:UserInstallation=file:///" + userProfileDir.getAbsolutePath().replace("\\", "/"));
                 command.add("--convert-to");
                 command.add("pdf");
                 break;
@@ -603,6 +607,7 @@ public class ConverterMain {
         }
 
         libreOfficePath = prop.getProperty("converter.libreoffice.path", "C:\\Program Files\\LibreOffice\\program\\soffice.exe");
+        libreOfficeProfilePath = prop.getProperty("converter.libreoffice.profile.path", "C:\\Program Files\\LibreOffice");
         autoCadPath = prop.getProperty("converter.autocad.path", "C:\\Program Files\\Autodesk\\AutoCAD 2024\\accoreconsole.exe");
         autoCadScriptPath = prop.getProperty("converter.autocad.script.path", "C:\\IPLMS\\scripts\\dwg2pdf.scr");
         autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "120"));

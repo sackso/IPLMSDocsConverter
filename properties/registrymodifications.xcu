@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!-- =================================================================== -->
+  <!-- 1. 글꼴 대체(Font Substitution) 전역 활성화 및 와일드카드(*) 일괄 매핑 -->
+  <!-- =================================================================== -->
+  <item oor:path="/org.openoffice.Office.Common/Font/Substitution">
+    <prop oor:name="Replacement" oor:type="xs:boolean"><value>true</value></prop>
+  </item>
+
+  <item oor:path="/org.openoffice.Office.Common/Font/Substitution/FontPairs">
+    <!-- 시스템에 없는 모든 폰트(*)를 Noto Sans KR로 강제 대체 -->
+    <node oor:name="Pair1" oor:op="replace">
+      <prop oor:name="Font" oor:type="xs:string"><value>*</value></prop>
+      <prop oor:name="ReplaceFont" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+      <prop oor:name="Always" oor:type="xs:boolean"><value>true</value></prop>
+      <prop oor:name="OnScreenOnly" oor:type="xs:boolean"><value>false</value></prop>
+    </node>
+  </item>
+
+  <!-- =================================================================== -->
+  <!-- 2. 각 모듈(Writer, Calc, Impress) 기본 CJK/아시아 폰트 기본값 변경   -->
+  <!-- =================================================================== -->
+  <!-- Writer (Word, HWP) -->
+  <item oor:path="/org.openoffice.Office.Writer/DefaultFont">
+    <prop oor:name="Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Heading" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_List" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+  </item>
+
+  <!-- Calc (Excel) -->
+  <item oor:path="/org.openoffice.Office.Calc/DefaultFont">
+    <prop oor:name="Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Heading" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+  </item>
+
+  <!-- Impress (PowerPoint) -->
+  <item oor:path="/org.openoffice.Office.Impress/DefaultFont">
+    <prop oor:name="Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Standard" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+    <prop oor:name="CJK_Heading" oor:type="xs:string"><value>Noto Sans KR</value></prop>
+  </item>
+
+  <!-- =================================================================== -->
+  <!-- 3. PPT 줄바꿈 방지 및 여백 최적화                                   -->
+  <!-- =================================================================== -->
+  <item oor:path="/org.openoffice.Office.Impress/Layout">
+    <prop oor:name="TextFittedToSize" oor:type="xs:boolean"><value>true</value></prop>
+  </item>
+
+</oor:items>
