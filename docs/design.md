@@ -104,6 +104,17 @@ graph TD
 
 ---
 
+## 4.1. 프로세스 및 메모리 신뢰성 보장 (추가)
+
+* **LibreOffice 사용자 프로필 격리 (UserInstallation)**:
+   * LibreOffice 실행 시 사용자 프로필 동시 접근 충돌을 방지하기 위해 `converter.libreoffice.profile.path` 기반으로 `-env:UserInstallation` 옵션을 주입합니다.
+* **GUI 콘솔 메모리 버퍼 제어**:
+   * `ConverterGUI`의 `JTextPane` 버퍼 크기가 `converter.gui.log.max.length`(기본 500,000자)를 초과할 경우, 상위 50%의 오래된 로그를 자동으로 삭제(Trim)하여 GUI 메모리 낭비를 방지합니다.
+* **원본 이동 시 파일명 충돌 회피 (Unique File Naming)**:
+   * 변환 성공 후 원본 파일을 출력 폴더로 이동 시, 동일 파일명이 이미 존재하는 경우 `파일명_1.ext`, `파일명_2.ext`와 같이 순번을 자동 부여하여 파일 덮어쓰기 손실을 방지합니다.
+   * 
+---
+
 ## 5. 설정 로딩 및 환경 설정 (`config.properties`)
 
 ### 5.1. 설정 파일 탐색 순서
@@ -156,10 +167,10 @@ converter.memory.limit.bytes=2147483648
 
 ### 6.1. LibreOffice 변환
 
-* MS Office 계열은 다음 형태로 실행합니다.
+* **MS Office (Word, Excel) & 공통 문서**
 
 ```text
-soffice --headless --convert-to pdf --outdir <output_dir> <src_file>
+  soffice --headless --norestore -env:UserInstallation=file:///<profile_path>/libreoffice_profile --convert-to pdf:<filter> --outdir <output_dir> <src_file>
 ```
 
 * HWP/HWPX 계열은 HWP 입력 필터와 Writer PDF Export 필터를 사용합니다.
