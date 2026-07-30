@@ -164,16 +164,6 @@ public class ConverterMain {
 
                 String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
 
-
-                // 대용량 도면 Dynamic Timeout 계산
-                long fileSizeInMb = srcFile.length() / (1024 * 1024);
-                int dynamicTimeout = autoCadTimeoutSeconds;
-                if (fileSizeInMb > 30) {
-                    dynamicTimeout = Math.min((int) (autoCadTimeoutSeconds * (fileSizeInMb / 20.0)), 1800);
-                    System.out.println(">> [대용량 DWG 감지] " + srcFile.getName() + " (" + fileSizeInMb + "MB) -> 타임아웃 " + dynamicTimeout + "초 동적 확장");
-                    autoCadTimeoutSeconds = dynamicTimeout;
-                }
-
                 int activeTimeout = "dwg".equals(ext) ? autoCadTimeoutSeconds : timeoutSeconds;
 
                 try {
