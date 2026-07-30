@@ -45,6 +45,7 @@ public class ConverterMain {
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
 
     public static void runConversionCycle() {
+
         try {
             String timestamp = new SimpleDateFormat("yyyyMMddHHmm").format(new Date());
             System.out.println("\n\n=====================================================");
@@ -159,26 +160,32 @@ public class ConverterMain {
 
                 Future<Boolean> future = conversionExecutor.submit(conversionTask);
 
+                // ConverterMain.java - runConversionCycle() 내 future.get() 호출부 수정
+
+                String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
+                int activeTimeout = "dwg".equals(ext) ? autoCadTimeoutSeconds : timeoutSeconds;
+
                 try {
-                    future.get(timeoutSeconds, TimeUnit.SECONDS);
+                    // 기존: future.get(timeoutSeconds, TimeUnit.SECONDS);
+                    future.get(activeTimeout, TimeUnit.SECONDS); // [수정] DWG는 autoCadTimeoutSeconds(720초) 적용
                 } catch (TimeoutException e) {
-                    System.err.println("ERROR: [타임아웃] 변환 시간 초과 (" + timeoutSeconds + "초 제한): " + srcFile.getName());
+                    System.err.println("ERROR: [타임아웃] 변환 시간 초과 (" + activeTimeout + "초 제한): " + srcFile.getName());
                     future.cancel(true);
 
                     ReportRow timeoutRow = new ReportRow();
                     timeoutRow.filePath = srcFile.getAbsolutePath();
                     timeoutRow.fileName = srcFile.getName();
-                    timeoutRow.fileType = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toUpperCase();
+                    timeoutRow.fileType = ext.toUpperCase();
                     timeoutRow.fileSize = String.format("%.2f", srcFile.length() / 1024.0);
                     timeoutRow.pdfResult = "실패 (타임아웃)";
                     timeoutRow.txtResult = "실패";
-                    timeoutRow.elapsedTime = String.valueOf(timeoutSeconds) + ".00";
+                    timeoutRow.elapsedTime = String.valueOf(activeTimeout) + ".00";
 
                     reportQueue.add(timeoutRow);
                     File relativeOutputDir = resolveRelativeOutputDir(inputDir, baseOutputDir, srcFile.getParentFile());
-                    File errFile = writeErrorFile(srcFile, "제한시간 " + timeoutSeconds + "초 초과로 인한 강제 중단", relativeOutputDir);
+                    File errFile = writeErrorFile(srcFile, "제한시간 " + activeTimeout + "초 초과로 인한 강제 중단", relativeOutputDir);
                     if (errFile != null) resultFilePaths.add(errFile.getAbsolutePath());
-                } catch (Exception e) {
+                }catch (Exception e) {
                     System.err.println("WARNING: [경고] 내부 스레드 제어 오류 패스: " + srcFile.getName() + " -> " + e.getMessage());
                 }
             }
@@ -375,14 +382,16 @@ public class ConverterMain {
             tempScript = File.createTempFile("accore_", ".scr", outputDir);
 
             try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(new FileOutputStream(tempScript), StandardCharsets.UTF_8))) {
-                pw.println("EXPERT");
-                pw.println("2");
-                pw.println("FILEDIA");
-                pw.println("0");
-                pw.println("CMDDIA");
-                pw.println("0");
-                pw.println("FONTALT");
-                pw.println("txt.shx");
+                // 1. 시스템 변수 속도 최적화 가드
+                pw.println("EXPERT"); pw.println("2");
+                pw.println("FILEDIA"); pw.println("0");
+                pw.println("CMDDIA"); pw.println("0");
+                pw.println("FONTALT"); pw.println("txt.shx");
+
+                // [성능 최적화 핵심 변수]
+                pw.println("XLOADCTL"); pw.println("0");   // 외부참조(Xref) 로딩 탐색 및 지연 차단
+                pw.println("DEMANDLOAD"); pw.println("0"); // 서드파티 커스텀 객체 요구로딩 팝업/대기 차단
+                pw.println("REGENMODE"); pw.println("0");  // 자동 객체 재렌더링(REGEN) 억제
 
                 pw.println("_.PLOT");
                 pw.println("Y");                  // 상세 플롯 구성 (예)
@@ -393,7 +402,7 @@ public class ConverterMain {
                 pw.println("L");                  // 방향 (Landscape)
                 pw.println("N");                  // 거꾸로 출력 (No)
                 pw.println("E");                  // 영역 (Extents)
-                pw.println("F");                  // 축척 (Fit)
+                pw.println("1=1");                  // 축척 (Fit)
                 pw.println("C");                  // 중심 (Center)
                 pw.println("Y");                  // 플롯 스타일 적용 (Yes)
                 pw.println("acad.ctb");     // 스타일 테이블
@@ -409,6 +418,7 @@ public class ConverterMain {
             // 2. AcCoreConsole CLI Command 구성 (/i, /s, /l)
             List<String> command = new ArrayList<>();
             command.add(autoCadExec.getAbsolutePath());
+            command.add("/nologo"); // 스플래시 및 초기화 출력 최소화
             command.add("/i");
             command.add(srcFile.getAbsolutePath());
             command.add("/s"); // AcCoreConsole 전용 스크립트 플래그
@@ -422,9 +432,18 @@ public class ConverterMain {
             System.out.println(">> [AcCoreConsole 2027 엔진 가동] " + srcFile.getName() + " -> " + destPdf.getName());
 
             Process process = pb.start();
+            // 파일 크기(MB) 계산
+            long fileSizeInMb = srcFile.length() / (1024 * 1024);
+
+// 30MB 초과 대용량 파일은 기본 타임아웃(720초)의 2배 적용 (최대 1800초 가드)
+            int dynamicTimeout = autoCadTimeoutSeconds;
+            if (fileSizeInMb > 30) {
+                dynamicTimeout = Math.min((int) (autoCadTimeoutSeconds * (fileSizeInMb / 20.0)), 1800);
+                System.out.println(">> [대용량 DWG 감지] " + srcFile.getName() + " (" + fileSizeInMb + "MB) -> 타임아웃 " + dynamicTimeout + "초 동적 확장");
+            }
 
             // 3. 프로세스 대기 및 타임아웃 가드 (120초)
-            boolean completed = process.waitFor(autoCadTimeoutSeconds, TimeUnit.SECONDS);
+            boolean completed = process.waitFor(dynamicTimeout, TimeUnit.SECONDS);
 
             if (!completed) {
                 process.destroyForcibly();
@@ -669,7 +688,7 @@ public class ConverterMain {
         libreOfficePath = prop.getProperty("converter.libreoffice.path", "C:\\Program Files\\LibreOffice\\program\\soffice.exe");
         libreOfficeProfilePath = prop.getProperty("converter.libreoffice.profile.path", "C:\\Program Files\\LibreOffice");
         autoCadPath = prop.getProperty("converter.autocad.path", "C:\\Program Files\\Autodesk\\AutoCAD 2027\\accoreconsole.exe");
-        autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "120"));
+        autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "720"));
         inputDirSetting = prop.getProperty("converter.input.dir", "");
         outputDirSetting = prop.getProperty("converter.output.dir", "");
         logDirSetting = prop.getProperty("converter.log.dir", "C:\\IPLMS\\95_logs");
