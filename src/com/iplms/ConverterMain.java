@@ -39,13 +39,18 @@ public class ConverterMain {
     private static int daemonIntervalMinutes;
     private static int serverPort;
     private static long memoryLimitBytes;
+    private static int maxBatchSize;
     private static HttpServer httpServer;
     private static final ReentrantLock conversionLock = new ReentrantLock();
 
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
-
+    private static final ReentrantLock cycleLock = new ReentrantLock();
     public static void runConversionCycle() {
-
+// 이미 변환 작업이 진행 중이면 이번 주기는 즉시 Skip
+        if (!cycleLock.tryLock()) {
+            System.out.println(">> [알림] 이전 주기 변환 작업이 진행 중입니다. 이번 주기를 건너뜁니다.");
+            return;
+        }
         try {
             String timestamp = new SimpleDateFormat("yyyyMMddHHmm").format(new Date());
             System.out.println("\n\n=====================================================");
@@ -82,6 +87,13 @@ public class ConverterMain {
             if (targetFiles.isEmpty()) {
                 System.out.println(">> [알림] 입력 폴더 이하에서 변환 가능한 대상 문서를 찾지 못했습니다.");
                 return;
+            }
+            // =========================================================================
+            // [추가 위치] 청크 단위 처리 (1회 주기당 최대 처리 건수 제한)
+            // =========================================================================
+            if (targetFiles.size() > maxBatchSize) {
+                System.out.println(">> [대량 대상 감지] 총 " + targetFiles.size() + "건 중 상위 " + maxBatchSize + "건만 우선 처리합니다.");
+                targetFiles = new ArrayList<>(targetFiles.subList(0, maxBatchSize));
             }
 
             System.out.println(">> [탐색 완료] 총 " + targetFiles.size() + "개의 대상 문서가 수집되었습니다. 순차 엔진을 기동합니다.\n\n");
@@ -212,6 +224,8 @@ public class ConverterMain {
         } catch (Exception e) {
             System.err.println("ERROR: 주기 작업 실행 중 예상치 못한 오류 발생: " + e.getMessage());
             e.printStackTrace();
+        }finally {
+            cycleLock.unlock();
         }
     }
 
@@ -728,6 +742,7 @@ public class ConverterMain {
         logDirSetting = prop.getProperty("converter.log.dir", "C:\\IPLMS\\95_logs");
         guiLogMaxLength = Integer.parseInt(prop.getProperty("converter.gui.log.max.length", "500000"));
         memoryLimitBytes = Long.parseLong(prop.getProperty("converter.memory.limit.bytes", String.valueOf(2L * 1024 * 1024 * 1024)));
+        maxBatchSize= Integer.parseInt(prop.getProperty("converter.max.batch.size", "30"));
         timeoutSeconds = Integer.parseInt(prop.getProperty("converter.timeout.seconds", "90"));
         reportExcelName = prop.getProperty("converter.report.excel.name", "conversion_report.csv");
         daemonIntervalMinutes = Integer.parseInt(prop.getProperty("daemon.interval.minutes", "10"));

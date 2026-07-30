@@ -281,8 +281,9 @@ public class ConverterGUI extends JFrame {
         int daemonIntervalMinutes = ConverterMain.getDaemonIntervalMinutes();
         System.out.println(">> [IPLMS Hybrid Converter] 데몬 모드로 시작합니다. 실행 주기: " + daemonIntervalMinutes + "분");
 
-        scheduler.scheduleAtFixedRate(ConverterMain::runConversionCycle, 0, daemonIntervalMinutes, TimeUnit.MINUTES);
-        
+//        scheduler.scheduleAtFixedRate(ConverterMain::runConversionCycle, 0, daemonIntervalMinutes, TimeUnit.MINUTES);
+        // 수정: 이전 작업 종료 후 daemonIntervalMinutes 만큼 대기
+        scheduler.scheduleWithFixedDelay(ConverterMain::runConversionCycle, 0, daemonIntervalMinutes, TimeUnit.MINUTES);
         // 내장 웹 서버 실행
         ConverterMain.startHttpServer();
     }
