@@ -28,9 +28,7 @@ public class ConverterMain {
 
     private static String libreOfficePath;
     private static String libreOfficeProfilePath;
-    private static String odaConvertPath;
     private static String autoCadPath;
-    private static String autoCadScriptPath;
     private static int autoCadTimeoutSeconds;
     private static String inputDirSetting;
     private static String outputDirSetting;
@@ -353,100 +351,117 @@ public class ConverterMain {
     }
 
     /**
-     * DWG 변환 처리 (TrueView 및 AcCoreConsole 지원)
-     * 파일마다 출력 PDF 경로가 명시된 동적 임시 스크립트(.scr)를 생성하여 N.pdf 덮어쓰기 현상을 방지합니다.
-     */
-    /**
-     * DWG 1개당 1개의 trueview*.scr 임시 스크립트를 생성하여 원본과 동일한 이름의 PDF로 변환합니다.
-     */
-
-    /**
-     * DWG 파일을 ODA File Converter Portable을 이용해 DXF로 변환 후 처리합니다.
+     * AutoCAD 2027 AcCoreConsole(Headless 엔진)을 호출하여 DWG를 PDF로 변환 후 프로세스를 종료합니다.
+     * cmd 예제)C:\Program Files\Autodesk\AutoCAD 2027>"C:\Program Files\Autodesk\AutoCAD 2027\accoreconsole.exe" /i "c:\IPLMS\91_input\bottom_plate.dwg" /s "c:\IPLMS\92_output\accore_6784213119159777660.scr" /l "en-US" > "c:\IPLMS\92_output\console_debug.log"
      */
     private static boolean runAutoCadConverter(File srcFile, File destPdf) throws Exception {
+        if (autoCadPath == null || autoCadPath.trim().isEmpty()) {
+            throw new FileNotFoundException("AutoCAD AcCoreConsole 경로(converter.autocad.path)가 설정되지 않았습니다.");
+        }
+        File autoCadExec = new File(autoCadPath.trim());
+        if (!autoCadExec.exists()) {
+            throw new FileNotFoundException("AcCoreConsole 실행 파일을 찾을 수 없습니다 -> " + autoCadPath);
+        }
+
         File outputDir = destPdf.getParentFile();
         if (!outputDir.exists() && !outputDir.mkdirs()) {
             throw new IOException("출력 디렉토리 생성 실패: " + outputDir.getAbsolutePath());
         }
 
-        // 1. DWG -> DXF 변환 (Portable ODA File Converter 호출)
-        boolean isDxfConverted = convertDwgToDxfPortable(srcFile, outputDir);
-        if (!isDxfConverted) {
-            System.err.println("ERROR: [ODA Portable] DWG -> DXF 변환 실패: " + srcFile.getName());
-            return false;
-        }
+        File tempScript = null;
 
-        // 2. 변환된 DXF 파일 경로 확인 (원본 파일명과 동일한 .dxf)
-        String baseName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.'));
-        File generatedDxf = new File(outputDir, baseName + ".dxf");
-
-        if (!generatedDxf.exists() || generatedDxf.length() == 0) {
-            System.err.println("ERROR: 생성된 DXF 파일을 찾을 수 없음: " + generatedDxf.getAbsolutePath());
-            return false;
-        }
-
-        System.out.println(">> [ODA Portable] DXF 변환 완료: " + generatedDxf.getName());
-
-        // 3. DXF 기반 파이프라인 후처리 진행 (필요 시 LibreCAD/FreeCAD/DXF-PDF 엔진 호출 가능)
-        // 현 시점에서는 DXF 변환 정상 완료 검증 후 임시 DXF 파일 정리
         try {
-            // TODO: DXF -> PDF 추가 변환 모듈이 있다면 이곳에서 destPdf로 변환 수행
-            // 예: runDxfToPdfConverter(generatedDxf, destPdf);
+            // 1. Target PDF 절대 경로 및 가드 옵션이 포함된 동적 스크립트(.scr) 생성
+            tempScript = File.createTempFile("accore_", ".scr", outputDir);
 
-            return generatedDxf.exists() && generatedDxf.length() > 0;
-        } finally {
-            // 임시 DXF 파일 cleanup이 필요한 경우 처리 (주석 해제하여 사용)
-            /*
-            if (generatedDxf.exists()) {
-                generatedDxf.delete();
+            try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(new FileOutputStream(tempScript), StandardCharsets.UTF_8))) {
+                pw.println("EXPERT");
+                pw.println("2");
+                pw.println("FILEDIA");
+                pw.println("0");
+                pw.println("CMDDIA");
+                pw.println("0");
+                pw.println("FONTALT");
+                pw.println("txt.shx");
+
+                pw.println("_.PLOT");
+                pw.println("Y");                  // 상세 플롯 구성 (예)
+                pw.println("");                   // 배치 이름 (기본값: 모형)
+                pw.println("DWG To PDF.pc3");     // 출력 장치
+                pw.println("");                   // [수정] 용지 크기: 빈 줄(엔터)로 기본값 사용
+                pw.println("M");                  // 단위 (Millimeters)
+                pw.println("L");                  // 방향 (Landscape)
+                pw.println("N");                  // 거꾸로 출력 (No)
+                pw.println("E");                  // 영역 (Extents)
+                pw.println("F");                  // 축척 (Fit)
+                pw.println("C");                  // 중심 (Center)
+                pw.println("Y");                  // 플롯 스타일 적용 (Yes)
+                pw.println("acad.ctb");     // 스타일 테이블
+                pw.println("Y");                  // 선 가중치 (Yes)
+                pw.println("N");                  // 음영 플롯 (No)
+                pw.println(destPdf.getAbsolutePath()); // PDF 저장 경로
+                pw.println("N");                  // 페이지 설정 저장 (No)
+                pw.println("Y");                  // 플롯 진행 (Yes)
+                pw.println("QUIT");               // 종료
+                pw.println();                     // 스크립트 마감 개행
             }
-            */
+
+            // 2. AcCoreConsole CLI Command 구성 (/i, /s, /l)
+            List<String> command = new ArrayList<>();
+            command.add(autoCadExec.getAbsolutePath());
+            command.add("/i");
+            command.add(srcFile.getAbsolutePath());
+            command.add("/s"); // AcCoreConsole 전용 스크립트 플래그
+            command.add(tempScript.getAbsolutePath());
+            command.add("/l");
+            command.add("en-US");
+
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.directory(autoCadExec.getParentFile()); // Working Directory 지정
+
+            System.out.println(">> [AcCoreConsole 2027 엔진 가동] " + srcFile.getName() + " -> " + destPdf.getName());
+
+            Process process = pb.start();
+
+            // 3. 프로세스 대기 및 타임아웃 가드 (120초)
+            boolean completed = process.waitFor(autoCadTimeoutSeconds, TimeUnit.SECONDS);
+
+            if (!completed) {
+                process.destroyForcibly();
+                System.err.println("ERROR: [타임아웃] AcCoreConsole 프로세스 강제 종료 (" + autoCadTimeoutSeconds + "초 초과): " + srcFile.getName());
+                throw new TimeoutException("AutoCAD 변환 프로세스 시간 초과: " + srcFile.getName());
+            }
+
+            // 4. 결과 PDF 검증
+            if (destPdf.exists() && destPdf.length() > 0) {
+                System.out.println(">> [AcCoreConsole 변환 성공]: " + destPdf.getAbsolutePath());
+                return true;
+            }
+
+            // 예외적 경로 보정
+            String defaultGeneratedName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.')) + ".pdf";
+            File generatedPdf = new File(outputDir, defaultGeneratedName);
+            if (!generatedPdf.exists()) {
+                generatedPdf = new File(srcFile.getParentFile(), defaultGeneratedName);
+            }
+
+            if (generatedPdf.exists()) {
+                if (!generatedPdf.getAbsolutePath().equals(destPdf.getAbsolutePath())) {
+                    if (destPdf.exists()) destPdf.delete();
+                    generatedPdf.renameTo(destPdf);
+                }
+                return true;
+            }
+
+            return false;
+
+        } finally {
+            // 5. 임시 .scr 스크립트 Cleanup
+            if (tempScript != null && tempScript.exists()) {
+                tempScript.delete();
+            }
         }
     }
-
-    /**
-     * ODA File Converter Portable CLI를 호출하여 DWG를 DXF로 변환합니다.
-     */
-    private static boolean convertDwgToDxfPortable(File srcDwg, File outputDxfDir) throws Exception {
-        // config.properties에서 지정한 oda portable 경로 사용
-        String odaPortablePath = autoCadPath; // 또는 별도 설정값 사용
-        if (odaPortablePath == null || odaPortablePath.trim().isEmpty()) {
-      odaPortablePath = "C:\\IPLMS\\tools\\ODAFileConverterPortable\\ODAFileConverter.exe";
-        }
-
-        File odaExec = new File(odaPortablePath.trim());
-        if (!odaExec.exists()) {
-            throw new FileNotFoundException("ODA Portable 실행 파일을 찾을 수 없습니다 -> " + odaExec.getAbsolutePath());
-        }
-
-        File inputDir = srcDwg.getParentFile();
-
-        // ProcessBuilder Command 구성
-        // 규격: ODAFileConverter.exe "입력폴더" "출력폴더" "버전" "포맷" "자식폴더탐색(0/1)" "복구(0/1)"
-        List<String> command = new ArrayList<>();
-        command.add(odaExec.getAbsolutePath());
-        command.add(inputDir.getAbsolutePath());
-        command.add(outputDxfDir.getAbsolutePath());
-        command.add("ACAD2018"); // DWG/DXF Version (AutoCAD 2018~2024 규격)
-        command.add("DXF");    // Target Format
-        command.add("0");      // Recurse subdirectories (0: False)
-        command.add("1");      // Audit & Repair (1: True)
-
-        ProcessBuilder pb = new ProcessBuilder(command);
-        // DLL dynamic linking 링킹 오류 방지를 위해 Working Directory를 ODA 포터블 폴더로 지정
-        pb.directory(odaExec.getParentFile());
-
-        Process process = pb.start();
-        boolean completed = process.waitFor(autoCadTimeoutSeconds, TimeUnit.SECONDS);
-
-        if (!completed) {
-            process.destroyForcibly();
-            throw new TimeoutException("ODA Portable DXF 변환 시간 초과 (" + autoCadTimeoutSeconds + "초 제한): " + srcDwg.getName());
-        }
-
-        return process.exitValue() == 0;
-    }
-
     private static String detectFileVersion(File file, String ext) {
         return "표준 규격";
     }
@@ -653,11 +668,7 @@ public class ConverterMain {
 
         libreOfficePath = prop.getProperty("converter.libreoffice.path", "C:\\Program Files\\LibreOffice\\program\\soffice.exe");
         libreOfficeProfilePath = prop.getProperty("converter.libreoffice.profile.path", "C:\\Program Files\\LibreOffice");
-        odaConvertPath =
-        prop.getProperty(
-            "converter.oda.portable.path",
-            "C:\\IPLMS\\tools\\ODAFileConverterPortable\\ODAFileConverter.exe");
-        autoCadScriptPath = prop.getProperty("converter.autocad.script.path", "C:\\IPLMS\\scripts\\dwg2pdf.scr");
+        autoCadPath = prop.getProperty("converter.autocad.path", "C:\\Program Files\\Autodesk\\AutoCAD 2027\\accoreconsole.exe");
         autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "120"));
         inputDirSetting = prop.getProperty("converter.input.dir", "");
         outputDirSetting = prop.getProperty("converter.output.dir", "");
