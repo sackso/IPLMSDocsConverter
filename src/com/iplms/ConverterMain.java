@@ -578,13 +578,36 @@ public class ConverterMain {
             }
 
             File movedFile = createUniqueTargetFile(targetDir, srcFile.getName());
-            Files.move(srcFile.toPath(), movedFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            boolean moved = false;
+
+            // 1. OS 파일 핸들 해제 대기 및 Move 재시도 (최대 5회, 500ms 간격)
+            for (int i = 0; i < 5; i++) {
+                try {
+                    Files.move(srcFile.toPath(), movedFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    moved = true;
+                    break;
+                } catch (IOException e) {
+                    try {
+                        Thread.sleep(500); // Windows OS 핸들 해제 대기
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+
+            // 2. Move 최종 실패 시 Copy & Delete Fallback 처리
+            if (!moved) {
+                Files.copy(srcFile.toPath(), movedFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                if (!srcFile.delete()) {
+                    srcFile.deleteOnExit(); // JVM 종료 시 삭제 예약
+                }
+            }
+
             System.out.println(">> [원본 이동 완료] " + srcFile.getName() + " -> " + movedFile.getAbsolutePath());
         } catch (Exception e) {
             System.err.println("WARNING: [원본 이동 실패] " + srcFile.getName() + " -> " + e.getMessage());
         }
     }
-
     private static File createUniqueTargetFile(File targetDir, String fileName) {
         File targetFile = new File(targetDir, fileName);
         if (!targetFile.exists()) {
