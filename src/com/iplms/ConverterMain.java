@@ -163,6 +163,17 @@ public class ConverterMain {
                 // ConverterMain.java - runConversionCycle() 내 future.get() 호출부 수정
 
                 String ext = srcFile.getName().substring(srcFile.getName().lastIndexOf(".") + 1).toLowerCase();
+
+
+                // 대용량 도면 Dynamic Timeout 계산
+                long fileSizeInMb = srcFile.length() / (1024 * 1024);
+                int dynamicTimeout = autoCadTimeoutSeconds;
+                if (fileSizeInMb > 30) {
+                    dynamicTimeout = Math.min((int) (autoCadTimeoutSeconds * (fileSizeInMb / 20.0)), 1800);
+                    System.out.println(">> [대용량 DWG 감지] " + srcFile.getName() + " (" + fileSizeInMb + "MB) -> 타임아웃 " + dynamicTimeout + "초 동적 확장");
+                    autoCadTimeoutSeconds = dynamicTimeout;
+                }
+
                 int activeTimeout = "dwg".equals(ext) ? autoCadTimeoutSeconds : timeoutSeconds;
 
                 try {
@@ -378,72 +389,66 @@ public class ConverterMain {
         File tempScript = null;
 
         try {
-            // 1. Target PDF 절대 경로 및 가드 옵션이 포함된 동적 스크립트(.scr) 생성
+            // 1. Target PDF 절대 경로 기반 동적 스크립트(.scr) 생성
             tempScript = File.createTempFile("accore_", ".scr", outputDir);
 
             try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(new FileOutputStream(tempScript), StandardCharsets.UTF_8))) {
-                // 1. 시스템 변수 속도 최적화 가드
+                // 시스템 변수 및 속도 최적화 가드
                 pw.println("EXPERT"); pw.println("2");
                 pw.println("FILEDIA"); pw.println("0");
                 pw.println("CMDDIA"); pw.println("0");
                 pw.println("FONTALT"); pw.println("txt.shx");
 
-                // [성능 최적화 핵심 변수]
-                pw.println("XLOADCTL"); pw.println("0");   // 외부참조(Xref) 로딩 탐색 및 지연 차단
-                pw.println("DEMANDLOAD"); pw.println("0"); // 서드파티 커스텀 객체 요구로딩 팝업/대기 차단
-                pw.println("REGENMODE"); pw.println("0");  // 자동 객체 재렌더링(REGEN) 억제
+                // 불필요한 DB 변경 방지
+                pw.println("XLOADCTL"); pw.println("0");
+                pw.println("DEMANDLOAD"); pw.println("0");
+                pw.println("REGENMODE"); pw.println("0");
 
                 pw.println("_.PLOT");
                 pw.println("Y");                  // 상세 플롯 구성 (예)
                 pw.println("");                   // 배치 이름 (기본값: 모형)
                 pw.println("DWG To PDF.pc3");     // 출력 장치
-                pw.println("");                   // [수정] 용지 크기: 빈 줄(엔터)로 기본값 사용
+                pw.println("ISO_full_bleed_A3_(420.00_x_297.00_MM)"); // A3 용지
                 pw.println("M");                  // 단위 (Millimeters)
                 pw.println("L");                  // 방향 (Landscape)
                 pw.println("N");                  // 거꾸로 출력 (No)
                 pw.println("E");                  // 영역 (Extents)
-                pw.println("1=1");                  // 축척 (Fit)
+                pw.println("F");                  // 축척 (Fit)
                 pw.println("C");                  // 중심 (Center)
                 pw.println("Y");                  // 플롯 스타일 적용 (Yes)
-                pw.println("acad.ctb");     // 스타일 테이블
+                pw.println("acad.ctb");           // 스타일 테이블 (컬러)
                 pw.println("Y");                  // 선 가중치 (Yes)
                 pw.println("N");                  // 음영 플롯 (No)
-                pw.println(destPdf.getAbsolutePath()); // PDF 저장 경로
+                pw.println(destPdf.getAbsolutePath()); // [핵심] Target PDF 저장 경로
                 pw.println("N");                  // 페이지 설정 저장 (No)
                 pw.println("Y");                  // 플롯 진행 (Yes)
                 pw.println("QUIT");               // 종료
-                pw.println();                     // 스크립트 마감 개행
+                pw.println("Y");               // 종료
+                pw.println();                     // 마감 개행
+                pw.println();                     // 마감 개행
             }
 
-            // 2. AcCoreConsole CLI Command 구성 (/i, /s, /l)
+            // 2. AcCoreConsole CLI Command 구성 (/nologo, /i, /s, /l)
             List<String> command = new ArrayList<>();
             command.add(autoCadExec.getAbsolutePath());
-            command.add("/nologo"); // 스플래시 및 초기화 출력 최소화
             command.add("/i");
-            command.add(srcFile.getAbsolutePath());
-            command.add("/s"); // AcCoreConsole 전용 스크립트 플래그
+            command.add(srcFile.getAbsolutePath()); // [수정] 원본 DWG 경로 직접 전달
+            command.add("/s");
             command.add(tempScript.getAbsolutePath());
             command.add("/l");
             command.add("en-US");
 
             ProcessBuilder pb = new ProcessBuilder(command);
-            pb.directory(autoCadExec.getParentFile()); // Working Directory 지정
+            pb.directory(autoCadExec.getParentFile());
+            pb.redirectErrorStream(true); // stderr를 stdout으로 병합
+            pb.redirectOutput(new File("NUL"));
 
             System.out.println(">> [AcCoreConsole 2027 엔진 가동] " + srcFile.getName() + " -> " + destPdf.getName());
 
             Process process = pb.start();
-            // 파일 크기(MB) 계산
-            long fileSizeInMb = srcFile.length() / (1024 * 1024);
 
-// 30MB 초과 대용량 파일은 기본 타임아웃(720초)의 2배 적용 (최대 1800초 가드)
-            int dynamicTimeout = autoCadTimeoutSeconds;
-            if (fileSizeInMb > 30) {
-                dynamicTimeout = Math.min((int) (autoCadTimeoutSeconds * (fileSizeInMb / 20.0)), 1800);
-                System.out.println(">> [대용량 DWG 감지] " + srcFile.getName() + " (" + fileSizeInMb + "MB) -> 타임아웃 " + dynamicTimeout + "초 동적 확장");
-            }
-
-            // 3. 프로세스 대기 및 타임아웃 가드 (120초)
-            boolean completed = process.waitFor(dynamicTimeout, TimeUnit.SECONDS);
+            // 3. 프로세스 대기 및 타임아웃 가드
+            boolean completed = process.waitFor(autoCadTimeoutSeconds, TimeUnit.SECONDS);
 
             if (!completed) {
                 process.destroyForcibly();
@@ -451,36 +456,26 @@ public class ConverterMain {
                 throw new TimeoutException("AutoCAD 변환 프로세스 시간 초과: " + srcFile.getName());
             }
 
-            // 4. 결과 PDF 검증
+            // 4. 변환 결과 검증
             if (destPdf.exists() && destPdf.length() > 0) {
                 System.out.println(">> [AcCoreConsole 변환 성공]: " + destPdf.getAbsolutePath());
-                return true;
-            }
-
-            // 예외적 경로 보정
-            String defaultGeneratedName = srcFile.getName().substring(0, srcFile.getName().lastIndexOf('.')) + ".pdf";
-            File generatedPdf = new File(outputDir, defaultGeneratedName);
-            if (!generatedPdf.exists()) {
-                generatedPdf = new File(srcFile.getParentFile(), defaultGeneratedName);
-            }
-
-            if (generatedPdf.exists()) {
-                if (!generatedPdf.getAbsolutePath().equals(destPdf.getAbsolutePath())) {
-                    if (destPdf.exists()) destPdf.delete();
-                    generatedPdf.renameTo(destPdf);
-                }
                 return true;
             }
 
             return false;
 
         } finally {
-            // 5. 임시 .scr 스크립트 Cleanup
+            // 5. 사용 완료된 임시 스크립트만 Cleanup
             if (tempScript != null && tempScript.exists()) {
                 tempScript.delete();
             }
         }
     }
+
+
+
+
+
     private static String detectFileVersion(File file, String ext) {
         return "표준 규격";
     }
@@ -688,7 +683,7 @@ public class ConverterMain {
         libreOfficePath = prop.getProperty("converter.libreoffice.path", "C:\\Program Files\\LibreOffice\\program\\soffice.exe");
         libreOfficeProfilePath = prop.getProperty("converter.libreoffice.profile.path", "C:\\Program Files\\LibreOffice");
         autoCadPath = prop.getProperty("converter.autocad.path", "C:\\Program Files\\Autodesk\\AutoCAD 2027\\accoreconsole.exe");
-        autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "720"));
+        autoCadTimeoutSeconds = Integer.parseInt(prop.getProperty("converter.autocad.timeout.seconds", "120"));
         inputDirSetting = prop.getProperty("converter.input.dir", "");
         outputDirSetting = prop.getProperty("converter.output.dir", "");
         logDirSetting = prop.getProperty("converter.log.dir", "C:\\IPLMS\\95_logs");
