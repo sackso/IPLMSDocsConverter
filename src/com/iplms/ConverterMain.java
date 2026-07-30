@@ -361,6 +361,7 @@ public class ConverterMain {
     /**
      * AutoCAD 2027 AcCoreConsole(Headless 엔진)을 호출하여 DWG를 PDF로 변환 후 프로세스를 종료합니다.
      * cmd 예제)C:\Program Files\Autodesk\AutoCAD 2027>"C:\Program Files\Autodesk\AutoCAD 2027\accoreconsole.exe" /i "c:\IPLMS\91_input\bottom_plate.dwg" /s "c:\IPLMS\92_output\accore_6784213119159777660.scr" /l "en-US" > "c:\IPLMS\92_output\console_debug.log"
+     * 한글/공백/특수문자 경로 오작동 방지를 위해 타임스탬프 기반 임시 영문 치환 파이프라인 적용.
      */
     private static boolean runAutoCadConverter(File srcFile, File destPdf) throws Exception {
         if (autoCadPath == null || autoCadPath.trim().isEmpty()) {
@@ -376,10 +377,21 @@ public class ConverterMain {
             throw new IOException("출력 디렉토리 생성 실패: " + outputDir.getAbsolutePath());
         }
 
+        // =========================================================================
+        // [개선사항 1 & 2] 원본 정보 보존 및 타임스탬프 기반 임시 영문 파일 정의
+        // =========================================================================
+        String timestamp = new SimpleDateFormat("yyyyMMddHHmmssSSS").format(new Date());
+        File tempSrcDwg = new File(srcFile.getParentFile(), "temp_dwg_" + timestamp + ".dwg");
+        File tempDestPdf = new File(outputDir, "temp_pdf_" + timestamp + ".pdf");
         File tempScript = null;
 
         try {
-            // 1. Target PDF 절대 경로 기반 동적 스크립트(.scr) 생성
+            // 원본 DWG -> 임시 영문 DWG 파일로 복사
+            Files.copy(srcFile.toPath(), tempSrcDwg.toPath(), StandardCopyOption.REPLACE_EXISTING);
+
+            // =========================================================================
+            // [개선사항 3] temp 형태로 변경된 파일 경로로 .scr 스크립트 작성 및 PDF 변환
+            // =========================================================================
             tempScript = File.createTempFile("accore_", ".scr", outputDir);
 
             try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(new FileOutputStream(tempScript), StandardCharsets.UTF_8))) {
@@ -389,40 +401,40 @@ public class ConverterMain {
                 pw.println("CMDDIA"); pw.println("0");
                 pw.println("FONTALT"); pw.println("txt.shx");
 
-                // 불필요한 DB 변경 방지
+                // 불필요한 DB 변경 및 렌더링 지연 방지
                 pw.println("XLOADCTL"); pw.println("0");
                 pw.println("DEMANDLOAD"); pw.println("0");
                 pw.println("REGENMODE"); pw.println("0");
 
                 pw.println("_.PLOT");
-                pw.println("Y");                  // 상세 플롯 구성 (예)
-                pw.println("");                   // 배치 이름 (기본값: 모형)
-                pw.println("DWG To PDF.pc3");     // 출력 장치
-                pw.println("ISO_full_bleed_A3_(420.00_x_297.00_MM)"); // A3 용지
-                pw.println("M");                  // 단위 (Millimeters)
-                pw.println("L");                  // 방향 (Landscape)
-                pw.println("N");                  // 거꾸로 출력 (No)
-                pw.println("E");                  // 영역 (Extents)
-                pw.println("F");                  // 축척 (Fit)
-                pw.println("C");                  // 중심 (Center)
-                pw.println("Y");                  // 플롯 스타일 적용 (Yes)
-                pw.println("acad.ctb");           // 스타일 테이블 (컬러)
-                pw.println("Y");                  // 선 가중치 (Yes)
-                pw.println("N");                  // 음영 플롯 (No)
-                pw.println(destPdf.getAbsolutePath()); // [핵심] Target PDF 저장 경로
-                pw.println("N");                  // 페이지 설정 저장 (No)
-                pw.println("Y");                  // 플롯 진행 (Yes)
-                pw.println("QUIT");               // 종료
-                pw.println("Y");               // 종료
-                pw.println();                     // 마감 개행
-                pw.println();                     // 마감 개행
+                pw.println("Y");                                       // 상세 플롯 구성 (Yes)
+                pw.println("");                                        // 배치 이름 (기본값: 모형)
+                pw.println("DWG To PDF.pc3");                          // 출력 장치
+                pw.println("ISO_full_bleed_A3_(420.00_x_297.00_MM)");  // A3 용지
+                pw.println("M");                                       // 단위 (Millimeters)
+                pw.println("L");                                       // 방향 (Landscape)
+                pw.println("N");                                       // 거꾸로 출력 (No)
+                pw.println("E");                                       // 영역 (Extents)
+                pw.println("F");                                       // 축척 (Fit)
+                pw.println("C");                                       // 중심 (Center)
+                pw.println("Y");                                       // 플롯 스타일 적용 (Yes)
+                pw.println("acad.ctb");                                // 스타일 테이블 (컬러)
+                pw.println("Y");                                       // 선 가중치 (Yes)
+                pw.println("N");                                       // 음영 플롯 (No)
+                pw.println(tempDestPdf.getAbsolutePath());             // [임시 PDF 출력 경로 주입]
+                pw.println("N");                                       // 페이지 설정 저장 (No)
+                pw.println("Y");                                       // 플롯 진행 (Yes)
+                pw.println("QUIT");                                    // 종료
+                pw.println("Y");                                       // 변경사항 버리기 승인
+                pw.println();                                          // 마감 개행
             }
 
-            // 2. AcCoreConsole CLI Command 구성 (/nologo, /i, /s, /l)
+            // AcCoreConsole CLI Command 구성 (임시 DWG 파일 경로 전달)
             List<String> command = new ArrayList<>();
             command.add(autoCadExec.getAbsolutePath());
+            command.add("/nologo");
             command.add("/i");
-            command.add(srcFile.getAbsolutePath()); // [수정] 원본 DWG 경로 직접 전달
+            command.add(tempSrcDwg.getAbsolutePath()); // [임시 영문 DWG 주입]
             command.add("/s");
             command.add(tempScript.getAbsolutePath());
             command.add("/l");
@@ -430,14 +442,16 @@ public class ConverterMain {
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.directory(autoCadExec.getParentFile());
-            pb.redirectErrorStream(true); // stderr를 stdout으로 병합
+
+            // 프로세스 버퍼 데드락 방지 (Windows NUL 디바이스 리다이렉트)
+            pb.redirectErrorStream(true);
             pb.redirectOutput(new File("NUL"));
 
-            System.out.println(">> [AcCoreConsole 2027 엔진 가동] " + srcFile.getName() + " -> " + destPdf.getName());
+            System.out.println(">> [AcCoreConsole 2027 가동] " + srcFile.getName() + " (임시파일명: " + tempSrcDwg.getName() + ")");
 
             Process process = pb.start();
 
-            // 3. 프로세스 대기 및 타임아웃 가드
+            // 프로세스 완료 대기 및 타임아웃 가드
             boolean completed = process.waitFor(autoCadTimeoutSeconds, TimeUnit.SECONDS);
 
             if (!completed) {
@@ -446,23 +460,35 @@ public class ConverterMain {
                 throw new TimeoutException("AutoCAD 변환 프로세스 시간 초과: " + srcFile.getName());
             }
 
-            // 4. 변환 결과 검증
-            if (destPdf.exists() && destPdf.length() > 0) {
-                System.out.println(">> [AcCoreConsole 변환 성공]: " + destPdf.getAbsolutePath());
+            // =========================================================================
+            // [개선사항 4] 변환된 PDF 파일이름을 임시변수(원본 파일명)로 복원
+            // =========================================================================
+            if (tempDestPdf.exists() && tempDestPdf.length() > 0) {
+                if (destPdf.exists()) {
+                    destPdf.delete();
+                }
+                Files.move(tempDestPdf.toPath(), destPdf.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                System.out.println(">> [AcCoreConsole 변환 성공 및 파일명 복원 완료]: " + destPdf.getAbsolutePath());
                 return true;
             }
 
             return false;
 
         } finally {
-            // 5. 사용 완료된 임시 스크립트만 Cleanup
+            // =========================================================================
+            // 임시 자원 Clean-up (임시 DWG, 임시 PDF 잔여물, SCR 스크립트 삭제)
+            // =========================================================================
+            if (tempSrcDwg.exists()) {
+                tempSrcDwg.delete();
+            }
+            if (tempDestPdf.exists()) {
+                tempDestPdf.delete();
+            }
             if (tempScript != null && tempScript.exists()) {
                 tempScript.delete();
             }
         }
     }
-
-
 
 
 
