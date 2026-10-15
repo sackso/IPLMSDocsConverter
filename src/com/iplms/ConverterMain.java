@@ -1,6 +1,10 @@
 package com.iplms;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.text.PDFTextStripper;
 import java.io.*;
 import java.lang.management.ManagementFactory;
@@ -276,7 +280,7 @@ public class ConverterMain {
                         name.endsWith(".xlsx") || name.endsWith(".xls") ||
                         name.endsWith(".pptx") || name.endsWith(".ppt") ||
                         name.endsWith(".hwpx") || name.endsWith(".hwp") ||
-                        name.endsWith(".dwg")) {
+                        name.endsWith(".dwg") || name.endsWith(".png")) {
                     resultList.add(file);
                 }
             }
@@ -289,6 +293,10 @@ public class ConverterMain {
 
         if ("dwg".equals(ext)) {
             return runAutoCadConverter(srcFile, destPdf);
+        }else if ("png".equals(ext)){
+        //26.10.15 ; image file convert; shpark
+            return runImageConvert(srcFile,destPdf);
+
         } else {
             conversionLock.lock();
             try {
@@ -296,6 +304,54 @@ public class ConverterMain {
             } finally {
                 conversionLock.unlock();
             }
+        }
+    }
+
+    /**
+     * PNG 이미지 파일을 읽어 PDF 문서로 변환 생성합니다.
+     * Apache PDFBox 라이브러리를 활용하여 이미지 원본 비율/해상도(1:1)에 맞춘
+     * PDF 페이지를 생성하고 이미지를 직접 바인딩하여 저장합니다.
+     *
+     * @param srcFile  원본 PNG 파일
+     * @param destPdf  생성될 PDF 파일
+     * @return 변환 성공 여부 (true / false)
+     */
+    private static boolean runImageConvert(File srcFile, File destPdf) {
+        if (srcFile == null || !srcFile.exists() || destPdf == null) {
+            System.err.println("ERROR: [이미지 변환 오류] 입력 파일이 존재하지 않거나 출력 경로가 올바르지 않습니다.");
+            return false;
+        }
+
+        File outputDir = destPdf.getParentFile();
+        if (outputDir != null && !outputDir.exists() && !outputDir.mkdirs()) {
+            System.err.println("ERROR: [이미지 변환 오류] 출력 디렉토리 생성 실패: " + outputDir.getAbsolutePath());
+            return false;
+        }
+
+        // try-with-resources 구문으로 PDDocument 자동 자원 해제(close) 보장
+        try (PDDocument document = new PDDocument()) {
+            // 1. PNG 이미지 파일로부터 PDImageXObject 생성
+            PDImageXObject image = PDImageXObject.createFromFileByExtension(srcFile, document);
+
+            // 2. 이미지의 원본 픽셀 크기에 정확히 매칭되는 PDF 페이지 규격 생성 (여백/왜곡 방지)
+            float width = image.getWidth();
+            float height = image.getHeight();
+            PDPage page = new PDPage(new PDRectangle(width, height));
+            document.addPage(page);
+
+            // 3. 페이지 컨텐츠 스트림을 열어 캔버스 (0, 0) 위치에 이미지 그리기
+            try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
+                contentStream.drawImage(image, 0, 0, width, height);
+            }
+
+            // 4. 최종 PDF 파일 저장
+            document.save(destPdf);
+            System.out.println(">> [이미지 PDF 변환 성공]: " + destPdf.getAbsolutePath());
+            return true;
+
+        } catch (Exception e) {
+            System.err.println("ERROR: [이미지 PDF 변환 실패] " + srcFile.getName() + " -> " + e.getMessage());
+            return false;
         }
     }
 
@@ -335,6 +391,8 @@ public class ConverterMain {
                 command.add("-env:UserInstallation=file:///" + userProfileDir.getAbsolutePath().replace("\\", "/"));
                 command.add("--convert-to");
                 command.add("pdf:impress_pdf_Export:{\"PDFBugExport\":{\"type\":\"boolean\",\"value\":\"false\"},\"ExportFormFields\":{\"type\":\"boolean\",\"value\":\"true\"}}");
+                break;
+            case "png":
                 break;
             default:
                 command.add("-env:UserInstallation=file:///" + userProfileDir.getAbsolutePath().replace("\\", "/"));
@@ -849,7 +907,7 @@ public class ConverterMain {
                     name.endsWith(".xlsx") || name.endsWith(".xls") ||
                     name.endsWith(".pptx") || name.endsWith(".ppt") ||
                     name.endsWith(".hwpx") || name.endsWith(".hwp") ||
-                    name.endsWith(".dwg"))) {
+                    name.endsWith(".dwg") || name.endsWith(".png"))) {
                 sendResponse(exchange, 400, "{\"status\":\"error\", \"message\":\"Unsupported file format. Supported: docx, doc, xlsx, xls, pptx, ppt, hwpx, hwp, dwg\"}");
                 return;
             }
