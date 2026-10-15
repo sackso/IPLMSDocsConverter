@@ -311,7 +311,7 @@ public class ConverterMain {
      * PNG 이미지 파일을 읽어 PDF 문서로 변환 생성합니다.
      * Apache PDFBox 라이브러리를 활용하여 이미지 원본 비율/해상도(1:1)에 맞춘
      * PDF 페이지를 생성하고 이미지를 직접 바인딩하여 저장합니다.
-     *
+     * todo : 확장자의 정의가 필요함, 확장자별 이미지 파일 저장 테스트 필요함
      * @param srcFile  원본 PNG 파일
      * @param destPdf  생성될 PDF 파일
      * @return 변환 성공 여부 (true / false)
