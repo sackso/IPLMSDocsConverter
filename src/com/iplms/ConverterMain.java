@@ -16,12 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.ReentrantLock;
 import com.sun.net.httpserver.HttpServer;
@@ -49,6 +44,40 @@ public class ConverterMain {
 
     private static final ConcurrentLinkedQueue<ReportRow> reportQueue = new ConcurrentLinkedQueue<>();
     private static final ReentrantLock cycleLock = new ReentrantLock();
+
+    // =========================================================================
+    // [이미지 확장자 정의 및 지원 포맷 판별]
+    // =========================================================================
+    private static final Set<String> IMAGE_EXTENSIONS = new HashSet<>(
+            Arrays.asList("png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff")
+    );
+
+    /**
+     * 이미지 파일의 확장자 판단
+     * @param fileName
+     * @return
+     */
+    private static boolean isImageFile(String fileName) {
+        if (fileName == null || !fileName.contains(".")) return false;
+        String ext = fileName.substring(fileName.lastIndexOf(".") + 1).toLowerCase();
+        return IMAGE_EXTENSIONS.contains(ext);
+    }
+
+    /**
+     * 변환 지원을 위한 문서 확장자 판단
+     * @param fileName
+     * @return
+     */
+    private static boolean isSupportedDocument(String fileName) {
+        if (fileName == null) return false;
+        String name = fileName.toLowerCase();
+        return name.endsWith(".docx") || name.endsWith(".doc") ||
+                name.endsWith(".xlsx") || name.endsWith(".xls") ||
+                name.endsWith(".pptx") || name.endsWith(".ppt") ||
+                name.endsWith(".hwpx") || name.endsWith(".hwp") ||
+                name.endsWith(".dwg")  || isImageFile(name);
+    }
+
     public static void runConversionCycle() {
 // 이미 변환 작업이 진행 중이면 이번 주기는 즉시 Skip
         if (!cycleLock.tryLock()) {
@@ -275,12 +304,7 @@ public class ConverterMain {
             if (file.isDirectory()) {
                 scanDirectory(file, resultList);
             } else {
-                String name = file.getName().toLowerCase();
-                if (name.endsWith(".docx") || name.endsWith(".doc") ||
-                        name.endsWith(".xlsx") || name.endsWith(".xls") ||
-                        name.endsWith(".pptx") || name.endsWith(".ppt") ||
-                        name.endsWith(".hwpx") || name.endsWith(".hwp") ||
-                        name.endsWith(".dwg") || name.endsWith(".png")) {
+                if (isSupportedDocument(file.getName())) {
                     resultList.add(file);
                 }
             }
@@ -293,8 +317,8 @@ public class ConverterMain {
 
         if ("dwg".equals(ext)) {
             return runAutoCadConverter(srcFile, destPdf);
-        }else if ("png".equals(ext)){
-        //26.10.15 ; image file convert; shpark
+        }else if (IMAGE_EXTENSIONS.contains(ext)) {
+        //26.10.18 ; image file convert; shpark
             return runImageConvert(srcFile,destPdf);
 
         } else {
@@ -308,13 +332,10 @@ public class ConverterMain {
     }
 
     /**
-     * PNG 이미지 파일을 읽어 PDF 문서로 변환 생성합니다.
-     * Apache PDFBox 라이브러리를 활용하여 이미지 원본 비율/해상도(1:1)에 맞춘
-     * PDF 페이지를 생성하고 이미지를 직접 바인딩하여 저장합니다.
-     * todo : 확장자의 정의가 필요함, 확장자별 이미지 파일 저장 테스트 필요함
-     * @param srcFile  원본 PNG 파일
+     * 지원되는 이미지 파일을 읽어 원본 비율(1:1)을 유지하는 PDF 문서로 변환합니다.
+     * @param srcFile  원본 이미지 파일
      * @param destPdf  생성될 PDF 파일
-     * @return 변환 성공 여부 (true / false)
+     * @return 변환 성공 여부
      */
     private static boolean runImageConvert(File srcFile, File destPdf) {
         if (srcFile == null || !srcFile.exists() || destPdf == null) {
@@ -328,23 +349,19 @@ public class ConverterMain {
             return false;
         }
 
-        // try-with-resources 구문으로 PDDocument 자동 자원 해제(close) 보장
         try (PDDocument document = new PDDocument()) {
-            // 1. PNG 이미지 파일로부터 PDImageXObject 생성
+            // PDFBox 내장 파서로 이미지 로드 (PNG, JPG, GIF, BMP 등 자동 판별)
             PDImageXObject image = PDImageXObject.createFromFileByExtension(srcFile, document);
 
-            // 2. 이미지의 원본 픽셀 크기에 정확히 매칭되는 PDF 페이지 규격 생성 (여백/왜곡 방지)
             float width = image.getWidth();
             float height = image.getHeight();
             PDPage page = new PDPage(new PDRectangle(width, height));
             document.addPage(page);
 
-            // 3. 페이지 컨텐츠 스트림을 열어 캔버스 (0, 0) 위치에 이미지 그리기
             try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
                 contentStream.drawImage(image, 0, 0, width, height);
             }
 
-            // 4. 최종 PDF 파일 저장
             document.save(destPdf);
             System.out.println(">> [이미지 PDF 변환 성공]: " + destPdf.getAbsolutePath());
             return true;
